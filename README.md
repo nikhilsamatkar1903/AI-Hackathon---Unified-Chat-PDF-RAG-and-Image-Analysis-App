@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ## Configuration
 
-1. Copy the `.env` file and update it with your Azure OpenAI credentials:
+1. Copy the `.env.example` file to `.env` and update it with your Azure OpenAI credentials:
    - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint URL
    - `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key
    - `AZURE_OPENAI_DEPLOYMENT`: Deployment name (e.g., gpt-4o-mini)
