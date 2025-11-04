@@ -2,4 +2,5 @@
 .ruff_cache
 .venv
 venv
+.env
 utilities/__pycache__

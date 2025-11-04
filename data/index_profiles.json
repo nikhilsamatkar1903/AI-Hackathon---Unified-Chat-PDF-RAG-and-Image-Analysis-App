@@ -1,0 +1,51 @@
+{
+  "pdf_b98ccf5f849dcd57": {
+    "extract_time": 49.17757487297058,
+    "split_count": 93,
+    "split_time": 0.0005328655242919922,
+    "embed_persist_time": 8.772182941436768,
+    "total_time": 58.04937386512756
+  },
+  "pdf_89c7c8d8518f435e": {
+    "extract_time": 49.03060793876648,
+    "split_count": 96,
+    "split_time": 0.0,
+    "embed_persist_time": 9.1893150806427,
+    "total_time": 58.4314923286438
+  },
+  "pdf_d61268fc38edc9d8": {
+    "extract_time": 49.14789962768555,
+    "split_count": 93,
+    "split_time": 0.0,
+    "embed_persist_time": 9.437494993209839,
+    "total_time": 58.693819522857666
+  },
+  "pdf_169dcce3d5324d32": {
+    "extract_time": 50.26404166221619,
+    "split_count": 135,
+    "split_time": 0.002991199493408203,
+    "embed_persist_time": 8.583094835281372,
+    "total_time": 58.93313789367676
+  },
+  "pdf_96663cf30ca68581": {
+    "extract_time": 0.1821126937866211,
+    "split_count": 2,
+    "split_time": 0.01591777801513672,
+    "embed_persist_time": 12.85832929611206,
+    "total_time": 13.194364309310913
+  },
+  "pdf_48fe1f128e26dcba": {
+    "extract_time": 0.09314370155334473,
+    "split_count": 4,
+    "split_time": 0.0,
+    "embed_persist_time": 12.736241579055786,
+    "total_time": 12.979560375213623
+  },
+  "pdf_d6eee7f02c844b97": {
+    "extract_time": 8.3906569480896,
+    "split_count": 191,
+    "split_time": 0.003999948501586914,
+    "embed_persist_time": 6.6526875495910645,
+    "total_time": 15.067232131958008
+  }
+}
