@@ -29,6 +29,7 @@ from PIL import Image
 from dotenv import load_dotenv, find_dotenv
 import chromadb
 import openai
+from datetime import datetime
 
 # LangChain / vector imports
 from langchain_community.document_loaders import UnstructuredPDFLoader
@@ -560,6 +561,58 @@ def process_question_across_collections(
         return "Sorry — something went wrong while generating the answer.\n\nWhat other help do you need or what other information do you need?"
 
 
+def generate_conversation_summary(conversation_history, max_length=500):
+    """Generate a summary of the conversation history using Azure OpenAI."""
+    if not conversation_history:
+        return "No conversation history available."
+
+    # Format conversation for summarization
+    conversation_text = ""
+    for msg in conversation_history[-20:]:  # Last 20 messages for context
+        role = "User" if msg['role'] == 'user' else "Assistant"
+        conversation_text += f"{role}: {msg['content'][:200]}...\n" if len(msg['content']) > 200 else f"{role}: {msg['content']}\n"
+
+    summary_prompt = f"""Please provide a concise summary of this conversation, highlighting the main topics discussed, key insights, and any important conclusions or actions taken. Keep it under {max_length} characters.
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+
+    try:
+        summary = chat_with_model(
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            user_prompt=summary_prompt,
+            system_prompt="You are a helpful assistant that creates clear, concise conversation summaries.",
+            temperature=0.3
+        )
+        return summary[:max_length] + "..." if len(summary) > max_length else summary
+    except Exception as e:
+        logger.exception("Failed to generate conversation summary")
+        return f"Unable to generate summary: {str(e)}"
+
+
+def add_to_unified_history(mode, role, content):
+    """Add a message to the unified conversation history."""
+    if 'unified_conversation' not in st.session_state:
+        st.session_state['unified_conversation'] = []
+
+    # Add timestamp and mode information
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    unified_msg = {
+        'timestamp': timestamp,
+        'mode': mode,
+        'role': role,
+        'content': content
+    }
+
+    st.session_state['unified_conversation'].append(unified_msg)
+
+    # Keep only last 100 messages to prevent memory issues
+    if len(st.session_state['unified_conversation']) > 100:
+        st.session_state['unified_conversation'] = st.session_state['unified_conversation'][-100:]
+
+
 def unified_page():
     st.title("AI Hackathon")
 
@@ -644,6 +697,61 @@ def unified_page():
             selected_collections = []
             st.info("No PDF collections available. Upload and index PDFs to get started.")
 
+        st.markdown("---")
+        st.subheader("Conversation Summary")
+
+        # Show conversation statistics
+        unified_history = st.session_state.get('unified_conversation', [])
+        if unified_history:
+            total_messages = len(unified_history)
+            chat_messages = len([m for m in unified_history if m['mode'] == '💬 Chat'])
+            pdf_messages = len([m for m in unified_history if m['mode'] == '📄 PDF & Chat'])
+            image_messages = len([m for m in unified_history if m['mode'] == '🌋 Image Analysis'])
+
+            st.write(f"**Total Messages:** {total_messages}")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Chat", chat_messages)
+            with col2:
+                st.metric("PDF & Chat", pdf_messages)
+            with col3:
+                st.metric("Image Analysis", image_messages)
+
+            # Generate summary button
+            if st.button("Generate Conversation Summary", key="generate_summary"):
+                with st.spinner("Generating summary..."):
+                    # Convert unified history to simple format for summarization
+                    simple_history = [
+                        {'role': msg['role'], 'content': msg['content']}
+                        for msg in unified_history
+                    ]
+                    summary = generate_conversation_summary(simple_history)
+                    st.session_state['conversation_summary'] = summary
+
+            # Display summary if available
+            if 'conversation_summary' in st.session_state:
+                st.markdown("**Summary:**")
+                st.info(st.session_state['conversation_summary'])
+
+                # Export summary button
+                if st.button("Export Summary", key="export_summary"):
+                    # Create a downloadable text file with the summary
+                    summary_content = f"AI Hackathon Conversation Summary\n{'='*40}\n\n{st.session_state['conversation_summary']}\n\n{'='*40}\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nTotal Messages: {total_messages}\nChat: {chat_messages}, PDF & Chat: {pdf_messages}, Image Analysis: {image_messages}"
+                    st.download_button(
+                        label="Download Summary as Text",
+                        data=summary_content,
+                        file_name="conversation_summary.txt",
+                        mime="text/plain",
+                        key="download_summary"
+                    )
+
+                # Clear summary button
+                if st.button("Clear Summary", key="clear_summary"):
+                    del st.session_state['conversation_summary']
+                    st.rerun()
+        else:
+            st.info("No conversation history yet. Start chatting to see summary features!")
+
     # Main area for interaction
     st.subheader("Interaction")
 
@@ -663,6 +771,7 @@ def unified_page():
         if user_input:
             # Add user message to conversation
             st.session_state['chat_conversation'].append({"role": "user", "content": user_input})
+            add_to_unified_history("💬 Chat", "user", user_input)
             with st.chat_message("user"):
                 st.write(user_input)
 
@@ -671,11 +780,13 @@ def unified_page():
                     response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=user_input, system_prompt=None, temperature=0.7)
                     # Add assistant message to conversation
                     st.session_state['chat_conversation'].append({"role": "assistant", "content": response})
+                    add_to_unified_history("💬 Chat", "assistant", response)
                     with st.chat_message("assistant"):
                         st.write(response)
                 except Exception as e:
                     error_msg = f"Error: {e}"
                     st.session_state['chat_conversation'].append({"role": "assistant", "content": error_msg})
+                    add_to_unified_history("💬 Chat", "assistant", error_msg)
                     with st.chat_message("assistant"):
                         st.write(error_msg)
 
@@ -696,6 +807,7 @@ def unified_page():
         if user_input:
             # Add user message to conversation
             st.session_state['pdf_chat_conversation'].append({"role": "user", "content": user_input})
+            add_to_unified_history("📄 PDF & Chat", "user", user_input)
             with st.chat_message("user"):
                 st.write(user_input)
 
@@ -710,11 +822,13 @@ def unified_page():
                     )
                     # Add assistant message to conversation
                     st.session_state['pdf_chat_conversation'].append({"role": "assistant", "content": response})
+                    add_to_unified_history("📄 PDF & Chat", "assistant", response)
                     with st.chat_message("assistant"):
                         st.write(response)
                 except Exception as e:
                     error_msg = f"Error: {e}"
                     st.session_state['pdf_chat_conversation'].append({"role": "assistant", "content": error_msg})
+                    add_to_unified_history("📄 PDF & Chat", "assistant", error_msg)
                     with st.chat_message("assistant"):
                         st.write(error_msg)
 
@@ -741,6 +855,7 @@ def unified_page():
             if user_input:
                 # Add user message to conversation
                 st.session_state['image_conversation'].append({"role": "user", "content": user_input})
+                add_to_unified_history("🌋 Image Analysis", "user", user_input)
                 with st.chat_message("user"):
                     st.write(user_input)
 
@@ -752,11 +867,13 @@ def unified_page():
                         response = call_generate_api(model=selected_model, prompt=user_input, images_b64=[img_b64])
                         # Add assistant message to conversation
                         st.session_state['image_conversation'].append({"role": "assistant", "content": response})
+                        add_to_unified_history("🌋 Image Analysis", "assistant", response)
                         with st.chat_message("assistant"):
                             st.write(response)
                     except Exception as e:
                         error_msg = f"Error: {e}"
                         st.session_state['image_conversation'].append({"role": "assistant", "content": error_msg})
+                        add_to_unified_history("🌋 Image Analysis", "assistant", error_msg)
                         with st.chat_message("assistant"):
                             st.write(error_msg)
 
