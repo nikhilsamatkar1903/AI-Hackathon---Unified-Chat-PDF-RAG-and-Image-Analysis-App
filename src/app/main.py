@@ -71,16 +71,17 @@ METADATA_PATH = BASE_DIR / "data" / "pdf_collections.json"
 
 # RAG + prompt configuration
 SYSTEM_INSTRUCTIONS = (
-    "You are a retrieval-augmented assistant for service technicians in heavy machinery manufacturing and automobile sectors. Follow these rules strictly:\n"
-    "- Use ONLY the information present in the provided Context section below to answer the Question. Do NOT use external knowledge.\n"
-    "- If the Context does not contain sufficient information to answer, reply exactly: 'The current manuals don’t mention that. Please try searching with alternate terms.'\n"
-    "- Be concise: prefer up to 10 short bullet points when possible, especially for lists of parts or steps.\n"
-    "- For parts catalogs, accurately match part numbers to descriptions, specifications, or components.\n"
-    "- If the question asks for a description of a specific part number, extract and summarize the relevant details from the context.\n"
-    "- If the question asks for a part number based on a description, find the matching part number in the context.\n"
-    "- If you used retrieved content, append a one-line citation like [source: filename] (use the source provided in Context).\n"
-    "- Do NOT fabricate details, dates, or steps not present in Context.\n"
-    "- Provide direct, technical answers suitable for technicians, including any relevant specs or notes.\n"
+    "You are a helpful AI assistant for service technicians and business professionals. You have access to technical manuals and business documents.\n"
+    "Follow these rules:\n"
+    "- When you have relevant information from the provided Context, use it to give accurate, helpful answers\n"
+    "- If the Context contains partial information, provide what you can and note any limitations\n"
+    "- Only say 'The current manuals don't mention that. Please try searching with alternate terms.' when you truly have no relevant context\n"
+    "- Consider the conversation history to understand the user's intent and provide coherent, contextual responses\n"
+    "- For technical questions, be concise but informative, using bullet points when appropriate\n"
+    "- For business/analysis questions, provide thoughtful insights based on available information\n"
+    "- Always maintain conversation continuity and remember what was discussed previously\n"
+    "- If you used retrieved content, append a one-line citation like [source: filename]\n"
+    "- Be helpful, professional, and engaging in your responses\n"
 )
 
 FEW_SHOT_EXAMPLES = (
@@ -95,7 +96,7 @@ FEW_SHOT_EXAMPLES = (
     "Example 9:\nQ: What are the recommended tyre pressures for solo riding (Continental GT)?\nA: - Front: 20 PSI\n- Rear: 30 PSI\n[source: ContiGT_OwnersManual.pdf] (Section: Technical Specifications)\n\n"
     "Example 10:\nQ: If the provided Context does not include the requested information, how should the assistant respond?\nA: The current manuals don’t mention that. Please try searching with alternate terms.\n\n"
 )
-RAG_TOP_K = 10  # per collection (increased for better retrieval)
+RAG_TOP_K = 20  # per collection (increased for better retrieval)
 EXCERPT_MAX_CHARS = 2000
 
 # NOTE: create_vector_db_from_path, load_chroma_collection and handle_uploaded_files
@@ -179,15 +180,54 @@ def normalize_part_token(token: str) -> List[str]:
     variants.update({v.lower() for v in list(variants)})
     return list(variants)
 
-def is_summary_request(question: str) -> bool:
+def is_summary_request(question: str, conversation_history: List[Dict[str, str]] = None) -> bool:
     """Heuristic: detect if the question is asking for a summary, abstract, or overview.
-
-    This is used to trigger a different retrieval + LLM prompt strategy.
+    Also considers conversation context for better understanding.
+    Be more selective to avoid triggering on specific questions.
     """
-    # simple keyword-based heuristics for now
-    keywords = ["summary", "abstract", "overview", "synopsis", "recap"]
     question_lower = question.lower()
-    return any(kw in question_lower for kw in keywords)
+
+    # Direct summary keywords
+    summary_keywords = ["summary", "abstract", "overview", "synopsis", "recap", "summarize", "summarise"]
+
+    # More specific summary phrases
+    specific_summary_phrases = ["what is this", "tell me about this", "explain this document", "what's in this document", "give me an overview of this", "brief me on this document", "what does this document cover"]
+
+    # Check if it contains summary keywords
+    has_summary_keyword = any(kw in question_lower for kw in summary_keywords)
+    
+    # Check if it contains specific summary phrases
+    has_specific_phrase = any(phrase in question_lower for phrase in specific_summary_phrases)
+    
+    # For questions like "tell me about X", only trigger if X is generic (like "this", "the document")
+    if "tell me about" in question_lower:
+        # Extract what comes after "tell me about"
+        after_tell_me = question_lower.split("tell me about", 1)[1].strip()
+        # If it's specific (contains nouns, not just "this" or "the document"), don't treat as summary
+        if len(after_tell_me.split()) > 1 or not any(word in after_tell_me for word in ["this", "the document", "the manual", "the pdf"]):
+            return False
+
+    if has_summary_keyword or has_specific_phrase:
+        return True
+
+    # Check for document-related questions that imply summary intent
+    doc_indicators = ["pdf", "document", "manual", "book", "file", "content", "this document"]
+    analysis_indicators = ["what is", "tell me", "explain", "describe", "about this"]
+
+    if any(doc in question_lower for doc in doc_indicators) and any(analysis in question_lower for analysis in analysis_indicators):
+        return True
+
+    # Check conversation context for summary-related intent
+    if conversation_history:
+        recent_questions = [msg['content'] for msg in conversation_history[-4:] if msg['role'] == 'user']
+        for prev_q in recent_questions:
+            prev_lower = prev_q.lower()
+            if any(kw in prev_lower for kw in summary_keywords):
+                # If previous question was about summary and current is related, continue summary mode
+                if any(word in question_lower for word in ["pdf", "document", "manual", "book", "content", "what", "how", "explain", "future", "commercial", "gdp", "growth"]):
+                    return True
+
+    return False
 
 # Create a Chroma collection from a PDF file path
 def create_vector_db_from_path(path: Path, collection_name: Optional[str] = None) -> str:
@@ -265,6 +305,7 @@ def process_question_across_collections(
     question: str,
     selected_collections: List[str],
     selected_model: str,
+    conversation_history: List[Dict[str, str]] = None,
     rag_top_k: int = RAG_TOP_K,
     max_chars_per_doc: int = EXCERPT_MAX_CHARS,
     allow_partial: bool = False,
@@ -272,6 +313,7 @@ def process_question_across_collections(
 ) -> str:
     """
     Retrieves documents from each selected collection, builds context, and queries the LLM.
+    Includes conversation history for continuity when provided.
     """
     # Handle basic conversational queries
     conversational_responses = {
@@ -307,7 +349,7 @@ def process_question_across_collections(
 
     # If the user explicitly asked for a summary/abstract/overview, run a summary flow
     try:
-        if is_summary_request(question):
+        if is_summary_request(question, conversation_history):
             logger.info("Detected summary/abstract request — running summary flow")
             summary_pool = []
             for coll in selected_collections:
@@ -422,6 +464,10 @@ def process_question_across_collections(
                 else:
                     doc, score = item, None
                 retrieved.append((doc, score, coll))
+                # Debug: log source of retrieved documents
+                if hasattr(doc, 'metadata') and doc.metadata:
+                    source = doc.metadata.get('source', 'unknown')
+                    logger.debug(f"Retrieved from {coll}: source={source}, score={score}")
         except Exception:
             logger.exception(f"Failed to query collection: {coll}")
 
@@ -429,8 +475,28 @@ def process_question_across_collections(
     try:
         scores_present = [r[1] for r in retrieved if r[1] is not None]
         if scores_present and all(isinstance(s, (int, float)) for s in scores_present):
-            # sort by score descending
-            retrieved.sort(key=lambda x: x[1], reverse=True)
+            # Sort by file type priority first (PDF > DOCX > TXT), then by score
+            def sort_key(item):
+                doc, score, coll = item
+                # Determine file type priority (lower number = higher priority)
+                if hasattr(doc, 'metadata') and doc.metadata:
+                    source = doc.metadata.get('source', '').lower()
+                    if source.endswith('.pdf'):
+                        priority = 0  # Highest priority
+                    elif source.endswith('.docx'):
+                        priority = 1
+                    elif source.endswith('.txt'):
+                        priority = 2  # Lowest priority
+                    else:
+                        priority = 3
+                else:
+                    priority = 3
+                
+                # Use score if available, otherwise use 0
+                score_val = score if score is not None else 0
+                return (priority, -score_val)  # Sort by priority asc, then score desc
+            
+            retrieved.sort(key=sort_key)
         # build docs list from sorted retrieved list
         all_docs = [r[0] for r in retrieved]
         logger.info(f"Retrieved {len(all_docs)} documents from {len(selected_collections)} collections")
@@ -473,32 +539,54 @@ def process_question_across_collections(
         combined_docs = all_docs
 
     docs_for_context = combined_docs[: num_docs]
+    
     context_text = build_context_from_selected_docs(docs_for_context, max_chars_per_doc=max_chars_per_doc)
 
     # Debug: log the context text
     logger.info(f"Built context text (length: {len(context_text)}): {context_text[:500]}...")
+    
+    # Debug: log sources of documents in context
+    context_sources = []
+    for doc in docs_for_context:
+        if hasattr(doc, 'metadata') and doc.metadata:
+            source = doc.metadata.get('source', 'unknown')
+            context_sources.append(source)
+    logger.info(f"Context sources: {context_sources}")
 
     # If there is no context (no docs retrieved), do general chat instead of strict RAG
     if not context_text.strip():
         try:
-            # For general questions or when no PDF context available, use general chat
-            general_prompt = f"Please answer this question helpfully: {question}"
+            # For general questions or when no document context available, use general chat with conversation context
+            conversation_context = ""
+            if conversation_history and len(conversation_history) > 1:
+                recent_history = conversation_history[-6:-1]  # Exclude current question
+                if recent_history:
+                    conversation_context = "\n\nPrevious conversation:\n"
+                    for msg in recent_history:
+                        role = "User" if msg['role'] == 'user' else "Assistant"
+                        content = msg['content'][:300] + "..." if len(msg['content']) > 300 else msg['content']
+                        conversation_context += f"{role}: {content}\n"
+
+            general_prompt = f"{conversation_context}Please answer this question helpfully: {question}"
             response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
             return response + "\n\nWhat other help do you need or what other information do you need?"
         except Exception:
             logger.exception("General chat fallback failed")
             return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
 
-    # If there is minimal context (less than 100 chars), also do general chat to allow smooth conversation
-    if len(context_text.strip()) < 100:
-        try:
-            # For general questions or when insufficient PDF context, use general chat
-            general_prompt = f"Please answer this question helpfully: {question}"
-            response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
-            return response + "\n\nWhat other help do you need or what other information do you need?"
-        except Exception:
-            logger.exception("General chat fallback failed")
-            return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
+    # Build conversation history context if available
+    conversation_context = ""
+    if conversation_history and len(conversation_history) > 1:  # More than just the current question
+        # Get the last few exchanges (up to 6 messages to keep context manageable)
+        recent_history = conversation_history[-6:-1]  # Exclude the current question
+        if recent_history:
+            conversation_context = "\n\nPrevious Conversation:\n"
+            for msg in recent_history:
+                role = "User" if msg['role'] == 'user' else "Assistant"
+                # Truncate long messages to keep prompt size manageable
+                content = msg['content'][:500] + "..." if len(msg['content']) > 500 else msg['content']
+                conversation_context += f"{role}: {content}\n"
+            conversation_context += "\n"
 
     # Adjust strictness of instructions when partial answers are allowed
     if allow_partial:
@@ -513,7 +601,9 @@ def process_question_across_collections(
         local_system
         + "\n\nExamples:\n"
         + FEW_SHOT_EXAMPLES
-        + "\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+        + "\n\nContext:\n{context}"
+        + conversation_context
+        + "\n\nQuestion: {question}\n\nAnswer:"
     )
     # Format the prompt
     full_prompt = combined_template.format(context=context_text, question=question)
@@ -522,18 +612,53 @@ def process_question_across_collections(
     try:
         response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=full_prompt, system_prompt=None, temperature=0.0)
         logger.info(f"LLM response: {response}")
-        
-        # If the response indicates no information in manuals, fallback to general chat
+
+        # Check if the response is too generic/unhelpful and try to provide better context
+        if "manuals don't mention" in response.lower() and conversation_history:
+            # If we have conversation history, try to provide a more contextual response
+            recent_context = ""
+            for msg in conversation_history[-3:]:  # Look at last 3 messages
+                if msg['role'] == 'assistant' and 'source:' in msg['content']:
+                    # Extract source information from previous responses
+                    import re
+                    sources = re.findall(r'\[source:\s*([^]]+)\]', msg['content'])
+                    if sources:
+                        recent_context = f"Based on our previous discussion about {', '.join(sources)}, "
+
+            if recent_context:
+                # Retry with more context
+                enhanced_prompt = full_prompt.replace(
+                    "Question: {question}",
+                    f"Context: {recent_context}Question: {question}"
+                )
+                try:
+                    enhanced_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=enhanced_prompt, system_prompt=None, temperature=0.3)
+                    if "manuals don't mention" not in enhanced_response.lower():
+                        response = enhanced_response
+                except Exception:
+                    pass  # Keep original response if enhanced fails
+
+        # If the response indicates no information in manuals, try general chat with context
         if "manuals don't mention" in response.lower():
-            general_prompt = f"Please answer this question helpfully: {question}"
+            conversation_context = ""
+            if conversation_history and len(conversation_history) > 1:
+                recent_history = conversation_history[-4:-1]  # Exclude current question
+                if recent_history:
+                    conversation_context = "\n\nPrevious conversation context:\n"
+                    for msg in recent_history:
+                        role = "User" if msg['role'] == 'user' else "Assistant"
+                        content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                        conversation_context += f"{role}: {content}\n"
+
+            general_prompt = f"{conversation_context}Based on the conversation context, please provide a helpful response to: {question}"
             try:
-                response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
-                # For general chat, don't append sources
-                return response + "\n\nWhat other help do you need or what other information do you need?"
+                general_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
+                # Only use general response if it's more helpful
+                if len(general_response) > 50 and "sorry" not in general_response.lower():
+                    response = general_response + "\n\n(Note: This is based on general knowledge and conversation context, not specific manual content.)"
             except Exception:
                 logger.exception("General chat fallback failed")
-                return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
-        
+
         # If the model didn't include a source, append the actual retrieved sources (unique, in-order)
         if "[source:" not in response and docs_for_context:
             seen = []
@@ -566,13 +691,24 @@ def generate_conversation_summary(conversation_history, max_length=500):
     if not conversation_history:
         return "No conversation history available."
 
-    # Format conversation for summarization
+    # Format conversation for summarization, focusing on the dialogue flow
     conversation_text = ""
     for msg in conversation_history[-20:]:  # Last 20 messages for context
         role = "User" if msg['role'] == 'user' else "Assistant"
-        conversation_text += f"{role}: {msg['content'][:200]}...\n" if len(msg['content']) > 200 else f"{role}: {msg['content']}\n"
+        # Truncate long messages but keep key questions/answers
+        content = msg['content']
+        if len(content) > 200:
+            # Try to keep the question/answer essence
+            if role == "User":
+                content = content[:200] + "..."
+            else:
+                # For assistant, try to extract key points
+                lines = content.split('\n')
+                key_lines = [line for line in lines if not line.startswith('[') and not line.startswith('What other')]
+                content = '\n'.join(key_lines[:3])[:200] + "..." if key_lines else content[:200] + "..."
+        conversation_text += f"{role}: {content}\n"
 
-    summary_prompt = f"""Please provide a concise summary of this conversation, highlighting the main topics discussed, key insights, and any important conclusions or actions taken. Keep it under {max_length} characters.
+    summary_prompt = f"""Please provide a concise summary of this conversation dialogue, focusing on the topics discussed, questions asked, and key responses exchanged between the user and assistant. Do not summarize document content or technical details from manuals - focus only on the conversation flow and main discussion points. Keep it under {max_length} characters.
 
 Conversation:
 {conversation_text}
@@ -583,7 +719,7 @@ Summary:"""
         summary = chat_with_model(
             deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
             user_prompt=summary_prompt,
-            system_prompt="You are a helpful assistant that creates clear, concise conversation summaries.",
+            system_prompt="You are a helpful assistant that creates clear, concise conversation summaries focusing on dialogue and discussion points.",
             temperature=0.3
         )
         return summary[:max_length] + "..." if len(summary) > max_length else summary
@@ -646,56 +782,108 @@ def unified_page():
         uploaded_image = st.file_uploader("Image for multimodal questions", type=["png", "jpg", "jpeg"], key="unified_image_upload")
 
         st.markdown("---")
-        st.subheader("Upload PDFs (optional)")
-        uploaded_pdfs = st.file_uploader("Upload one or more PDF files", type=["pdf"], accept_multiple_files=True, key="unified_pdf_upload")
+        st.subheader("Upload Documents (Auto-indexed)")
+        uploaded_pdfs = st.file_uploader("Upload PDF, Word (.doc, .docx), or Text (.txt) files", type=["pdf", "doc", "docx", "txt"], accept_multiple_files=True, key="unified_pdf_upload")
 
-        # Only index when the user explicitly requests it to avoid re-indexing on every Streamlit rerun
+        # Track processed files to avoid re-indexing
+        if 'processed_files' not in st.session_state:
+            st.session_state['processed_files'] = set()
+
+        # Auto-index uploaded PDFs (only if not already processed)
         if uploaded_pdfs:
-            st.info(f"{len(uploaded_pdfs)} file(s) ready to index. Click 'Index uploaded PDFs' to create collections.")
-            index_clicked = st.button("Index uploaded PDFs", key="index_uploaded_pdfs")
-        else:
-            index_clicked = False
+            # Get checksums of uploaded files to check if they've been processed
+            current_file_checksums = set()
+            for uploaded in uploaded_pdfs:
+                file_bytes = uploaded.getvalue()
+                checksum = hashlib.sha256(file_bytes).hexdigest()
+                current_file_checksums.add(checksum)
+            
+            # Find new files that haven't been processed yet
+            new_files = []
+            for i, uploaded in enumerate(uploaded_pdfs):
+                file_bytes = uploaded.getvalue()
+                checksum = hashlib.sha256(file_bytes).hexdigest()
+                if checksum not in st.session_state['processed_files']:
+                    new_files.append(uploaded)
+            
+            if new_files:
+                # Provide a visual progress bar while indexing
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                status_text.text(f"Auto-indexing {len(new_files)} new file(s)...")
 
-        if uploaded_pdfs and index_clicked:
-            # Provide a visual progress bar while indexing using the backend progress_callback
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+                def _progress_cb(completed: int, total: int):
+                    try:
+                        progress_bar.progress(completed / total)
+                        status_text.text(f"Indexing {completed}/{total} files...")
+                    except Exception:
+                        pass
 
-            def _progress_cb(completed: int, total: int):
                 try:
-                    progress_bar.progress(completed / total)
-                    status_text.text(f"Indexing {completed}/{total} files...")
-                except Exception:
-                    pass
-
-            try:
-                # Index the uploaded PDFs
-                new_collections = handle_uploaded_files(uploaded_pdfs, PDF_UPLOAD_DIR, progress_callback=_progress_cb)
-                # Update the session state with the new collections
-                st.session_state['collections_meta'].update(new_collections)
-                st.success(f"Successfully indexed {len(new_collections)} collection(s): {', '.join(new_collections.keys())}")
-                # Clear the uploaded files after indexing to prevent re-indexing
-                st.session_state['unified_pdf_upload'] = []
-                st.rerun()  # Refresh the page to clear the file uploader
-            except Exception as e:
-                st.error(f"Error indexing PDFs: {e}")
-            finally:
-                progress_bar.empty()
-                status_text.empty()
+                    # Index the new files only
+                    new_collections = handle_uploaded_files(new_files, PDF_UPLOAD_DIR, progress_callback=_progress_cb)
+                    # Update the session state with the new collections
+                    st.session_state['collections_meta'].update(new_collections)
+                    # Mark these files as processed
+                    for uploaded in new_files:
+                        file_bytes = uploaded.getvalue()
+                        checksum = hashlib.sha256(file_bytes).hexdigest()
+                        st.session_state['processed_files'].add(checksum)
+                    st.success(f"✅ Successfully indexed {len(new_collections)} collection(s): {', '.join(new_collections.keys())}")
+                except Exception as e:
+                    st.error(f"❌ Error indexing documents: {e}")
+                finally:
+                    progress_bar.empty()
+                    status_text.empty()
+            else:
+                st.info("ℹ️ All uploaded files have already been indexed.")
 
         st.markdown("---")
-        st.subheader("Select Collections")
+        st.subheader("Database Management")
+
+        # Show current collections
         collections_meta = st.session_state.get('collections_meta', {})
         if collections_meta:
-            selected_collections = st.multiselect(
-                "Choose one or more PDF collections to search",
-                options=list(collections_meta.keys()),
-                default=list(collections_meta.keys())[:1],  # Default to first collection if available
-                key="unified_selected_collections"
-            )
+            st.write(f"**Available Document Collections:** {len(collections_meta)}")
+            for name in collections_meta.keys():
+                # Get detailed info for each collection
+                info = get_collection_info(name)
+                filename = info.get('filename', 'Unknown')
+                st.write(f"• {name}: {filename}")
+
+            # Refresh collections button
+            if st.button("🔄 Refresh Collections", key="refresh_collections"):
+                with st.spinner("Refreshing collections..."):
+                    try:
+                        st.session_state['collections_meta'] = list_collections()
+                        st.success("✅ Collections refreshed!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error refreshing collections: {e}")
+
+            # Clean database button
+            if st.button("🗑️ Clean Database", key="clean_database"):
+                with st.spinner("Cleaning database..."):
+                    try:
+                        delete_all_collections()
+                        # Clear local data
+                        if os.path.exists(PDF_UPLOAD_DIR):
+                            shutil.rmtree(PDF_UPLOAD_DIR)
+                            PDF_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+                        st.session_state['collections_meta'] = {}
+                        st.success("✅ Database cleaned! All collections and uploaded files removed.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error cleaning database: {e}")
         else:
-            selected_collections = []
-            st.info("No PDF collections available. Upload and index PDFs to get started.")
+            st.info("No document collections available. Upload documents above to get started.")
+
+        # Auto-select all available collections for document queries
+        selected_collections = list(collections_meta.keys()) if collections_meta else []
+        if selected_collections:
+            st.info(f"Auto-selected {len(selected_collections)} collection(s) for document queries.")
+        else:
+            st.info("No collections available for selection.")
 
         st.markdown("---")
         st.subheader("Conversation Summary")
@@ -730,7 +918,7 @@ def unified_page():
 
             # Display summary if available
             if 'conversation_summary' in st.session_state:
-                st.markdown("**Summary:**")
+                st.markdown("**Conversation Summary:**")
                 st.info(st.session_state['conversation_summary'])
 
                 # Export summary button
@@ -791,7 +979,7 @@ def unified_page():
                         st.write(error_msg)
 
     elif mode == "📄 PDF & Chat":
-        st.markdown("**PDF & Chat Mode:** Ask questions about the selected PDF collections or general questions (Azure OpenAI)")
+        st.markdown("**Document & Chat Mode:** Ask questions about uploaded documents (PDF, Word, Text) or general questions (Azure OpenAI - auto-searches all collections)")
         # chat interface
         # Initialize conversation history if not present
         if 'pdf_chat_conversation' not in st.session_state:
@@ -817,6 +1005,7 @@ def unified_page():
                         question=user_input,
                         selected_collections=selected_collections,
                         selected_model=selected_model,
+                        conversation_history=st.session_state['pdf_chat_conversation'],
                         rag_top_k=RAG_TOP_K,
                         max_chars_per_doc=EXCERPT_MAX_CHARS
                     )

@@ -1,0 +1,148 @@
+ARTH-MOVING MACHINE TROUBLESHOOTING GUIDE
+
+1. Hydraulic System Issues
+Symptom: Hydraulic system slow, jerky, or no movement
+Possible Causes:
+
+Low hydraulic fluid level
+Clogged hydraulic filter
+Air trapped in hydraulic lines
+Worn hydraulic pump
+Damaged control valve spool
+
+Remedies:
+
+Check and refill hydraulic fluid to recommended level
+Clean or replace hydraulic filter
+Bleed air from hydraulic system
+Test pump pressure; repair or replace pump if below spec
+Inspect control valve; clean or replace if spool is sticking
+
+
+2. Engine Overheating
+Symptom: Engine temperature rises rapidly or warning light ON
+Possible Causes:
+
+Coolant level low
+Radiator clogged with dirt/debris
+Faulty thermostat stuck closed
+Water pump failure
+Fan belt loose or broken
+
+Remedies:
+
+Refill coolant and check for leaks
+Clean radiator fins and flush cooling system
+Replace thermostat
+Inspect water pump for impeller damage; replace if faulty
+Tighten or replace fan belt
+
+
+3. Tracks or Wheels Not Moving
+Symptom: Machine does not propel forward or reverse
+Possible Causes:
+
+Drive motor failure
+Hydraulic pump malfunction
+Control valve stuck
+Track tension too loose
+Final drive gear damage
+
+Remedies:
+
+Inspect and replace drive motor if seized
+Test hydraulic pump pressure; repair or replace
+Clean or replace control valve
+Adjust track tension to OEM specification
+Inspect final drive gears; replace if worn or broken
+
+
+4. Electrical System Malfunction
+Symptom: No power to lights, sensors, or control panel
+Possible Causes:
+
+Battery discharged or dead
+Loose wiring connections
+Blown fuse or relay failure
+Corroded terminals
+Alternator not charging
+
+Remedies:
+
+Recharge or replace battery
+Tighten and secure all wiring connections
+Replace blown fuse and check circuit for short
+Clean corroded terminals and apply dielectric grease
+Test alternator output; replace if defective
+
+
+5. Fuel System Problems
+Symptom: Engine cranks but does not start or runs rough
+Possible Causes:
+
+Fuel filter clogged
+Air in fuel line
+Faulty fuel pump
+Injector nozzle clogged
+Water contamination in fuel
+
+Remedies:
+
+Replace fuel filter
+Bleed fuel system to remove air
+Test fuel pump pressure; replace if below spec
+Clean or replace injector nozzles
+Drain fuel tank and refill with clean fuel
+
+
+6. Excessive Smoke from Exhaust
+Symptom: Black, blue, or white smoke from exhaust
+Possible Causes:
+
+Black smoke: Over-fueling, clogged air filter
+Blue smoke: Engine oil entering combustion chamber
+White smoke: Coolant leak into cylinders
+
+Remedies:
+
+Replace air filter and check fuel injection settings
+Inspect piston rings and valve seals; replace if worn
+Pressure test cooling system; repair head gasket if leaking
+
+
+7. Warning Lights or Error Codes
+Symptom: Dashboard shows fault codes or warning lights
+Possible Causes:
+
+Sensor malfunction (temperature, pressure, speed)
+Loose sensor connectors
+ECU software error
+Short circuit in wiring harness
+
+Remedies:
+
+Scan ECU for error codes using diagnostic tool
+Check and secure sensor connectors
+Update ECU software if available
+Inspect wiring harness for damage; repair or replace
+
+
+8. Poor Machine Performance
+Symptom: Low digging force, slow cycle times
+Possible Causes:
+
+Hydraulic pump wear
+Incorrect engine RPM
+Blocked hydraulic lines
+Worn bucket teeth or cutting edge
+
+Remedies:
+
+Test pump flow and pressure; replace if worn
+Adjust engine RPM to recommended range
+Flush hydraulic lines and remove blockages
+Replace worn bucket teeth or cutting edge
+
+
+Safety Note:
+Always park the machine on level ground, engage parking brake, shut off engine, and relieve hydraulic pressure before troubleshooting.

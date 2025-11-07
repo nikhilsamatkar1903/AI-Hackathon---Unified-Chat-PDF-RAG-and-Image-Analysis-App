@@ -47,5 +47,33 @@
     "split_time": 0.003999948501586914,
     "embed_persist_time": 6.6526875495910645,
     "total_time": 15.067232131958008
+  },
+  "doc_f6ab6e258465d951": {
+    "extract_time": 0.0011463165283203125,
+    "split_count": 2,
+    "split_time": 0.0,
+    "embed_persist_time": 7.5999860763549805,
+    "total_time": 7.602143049240112
+  },
+  "doc_1d4c9b943d01ba03": {
+    "extract_time": 0.0010106563568115234,
+    "split_count": 2,
+    "split_time": 0.0011739730834960938,
+    "embed_persist_time": 5.765343189239502,
+    "total_time": 5.768786430358887
+  },
+  "doc_89c7c8d8518f435e": {
+    "extract_time": 16.709723234176636,
+    "split_count": 96,
+    "split_time": 0.0039174556732177734,
+    "embed_persist_time": 12.642245292663574,
+    "total_time": 29.45029926300049
+  },
+  "doc_169dcce3d5324d32": {
+    "extract_time": 23.34467887878418,
+    "split_count": 135,
+    "split_time": 0.014685869216918945,
+    "embed_persist_time": 9.410897493362427,
+    "total_time": 32.93396878242493
   }
 }

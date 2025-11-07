@@ -1,31 +1,20 @@
 {
-  "pdf_b98ccf5f849dcd57": {
-    "filename": "20161130 ClassicEFI Owners Manual Euro IV.pdf",
-    "checksum": "b98ccf5f849dcd573bdde585c2cc5ee8622f85f59fd6d37c08e3b683e24277c6"
+  "doc_1d4c9b943d01ba03": {
+    "filename": "EARTH-MOVING MACHINE TROUBLESHOOTIN.txt",
+    "checksum": "1d4c9b943d01ba03e428d7bd471c7299f27f054fb6c7553009ed811303d043a4"
   },
-  "pdf_89c7c8d8518f435e": {
+  "doc_f6ab6e258465d951": {
+    "filename": "ARTH-MOVING MACHINE TROUBLESHOOTING.txt",
+    "checksum": "f6ab6e258465d95179511473b4c91e9294a6511ad6dc49c122359504a4f426f3"
+  },
+  "doc_89c7c8d8518f435e": {
     "filename": "20161130 Conti GT Owners Manual Euro IV.pdf",
-    "checksum": "89c7c8d8518f435e116284f278eb8c0d84c042244f0bd1e6ec9d3eee14a6d7e2"
+    "checksum": "89c7c8d8518f435e116284f278eb8c0d84c042244f0bd1e6ec9d3eee14a6d7e2",
+    "last_indexed": "2025-11-07T11:23:40.818520"
   },
-  "pdf_d61268fc38edc9d8": {
-    "filename": "20161130 BulletEFI Owners Manual Euro IV.pdf",
-    "checksum": "d61268fc38edc9d80bfa71a711d47c5763610cdec363434c3a06bc9836eee3ca"
-  },
-  "pdf_169dcce3d5324d32": {
+  "doc_169dcce3d5324d32": {
     "filename": "ENGINE SERVICE MANUAL PDF 23.02.2017.pdf",
-    "checksum": "169dcce3d5324d32866ff0c9bc8893ffdf005adbeeb56a7e32ec63d26edf1970"
-  },
-  "pdf_96663cf30ca68581": {
-    "filename": "Special Tools List - Euro IV.pdf",
-    "checksum": "96663cf30ca68581408c006f3aba0f9dbe6988e9dceb2ac58eb0e6ee82ca3015"
-  },
-  "pdf_48fe1f128e26dcba": {
-    "filename": "Symptoms & Resolution - Euro IV.pdf",
-    "checksum": "48fe1f128e26dcba9eb1b41e49d4c07a56f998b8408b3f9359841fe1e730c059"
-  },
-  "pdf_d6eee7f02c844b97": {
-    "filename": "EURO IV - VEHICLE PARTS CATALOGUE PDF 16.02.2017.pdf",
-    "checksum": "d6eee7f02c844b9770b92ab7980be5195b69b8d5ff2c3eed2b402163fd091f41",
-    "last_indexed": "2025-10-31T18:51:11.108521"
+    "checksum": "169dcce3d5324d32866ff0c9bc8893ffdf005adbeeb56a7e32ec63d26edf1970",
+    "last_indexed": "2025-11-07T11:23:44.302584"
   }
 }

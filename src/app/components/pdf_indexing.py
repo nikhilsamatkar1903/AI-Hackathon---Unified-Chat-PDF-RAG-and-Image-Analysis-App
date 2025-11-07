@@ -8,9 +8,10 @@ from datetime import datetime
 import time
 import concurrent.futures
 from PyPDF2 import PdfReader
+import pdfplumber
 from langchain.schema import Document
 
-from langchain_community.document_loaders import UnstructuredPDFLoader
+from langchain_community.document_loaders import UnstructuredPDFLoader, TextLoader, UnstructuredWordDocumentLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Use local sentence-transformers for fast batch embeddings
 from sentence_transformers import SentenceTransformer
@@ -86,19 +87,73 @@ def _get_sentence_transformer():
     return _SB_MODEL
 
 
+def extract_text_from_file(path: Path) -> List[str]:
+    """Extract text from different file types (PDF, Word, Text) and return list of page/section texts."""
+    suffix = path.suffix.lower()
+    
+    if suffix == '.pdf':
+        # Use pdfplumber for better PDF text extraction, fallback to PyPDF2
+        try:
+            with pdfplumber.open(str(path)) as pdf:
+                pages = []
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    pages.append(text or "")
+                if any(pages):  # If pdfplumber extracted some text
+                    return pages
+        except Exception:
+            logger.exception(f"pdfplumber extraction failed for PDF: {path}")
+        
+        # Fallback to PyPDF2
+        try:
+            reader = PdfReader(str(path))
+            pages = [p.extract_text() or "" for p in reader.pages]
+            return pages
+        except Exception:
+            logger.exception(f"PyPDF2 extraction also failed for PDF: {path}")
+            return [""]
+    
+    elif suffix == '.docx':
+        # Use UnstructuredWordDocumentLoader for Word documents
+        try:
+            loader = UnstructuredWordDocumentLoader(str(path))
+            docs = loader.load()
+            # Combine all documents into sections/pages
+            text_content = [doc.page_content for doc in docs]
+            return text_content if text_content else [""]
+        except Exception:
+            logger.exception(f"Failed to extract text from Word document: {path}")
+            return [""]
+    
+    elif suffix == '.txt':
+        # Use TextLoader for text files
+        try:
+            loader = TextLoader(str(path))
+            docs = loader.load()
+            # Split text into reasonable chunks (simulate pages)
+            full_text = docs[0].page_content if docs else ""
+            # Split into chunks of approximately 2000 characters to simulate pages
+            chunk_size = 2000
+            chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
+            return chunks if chunks else [""]
+        except Exception:
+            logger.exception(f"Failed to extract text from text file: {path}")
+            return [""]
+    
+    else:
+        logger.warning(f"Unsupported file type: {suffix} for file: {path}")
+        return [""]
+
+
 def create_vector_db_from_path(path: Path, collection_name: Optional[str] = None) -> str:
-    """Create a Chroma vector collection from a PDF and attach richer metadata to each chunk.
+    """Create a Chroma vector collection from a document file (PDF, Word, Text) and attach richer metadata to each chunk.
 
     Returns the collection_name used.
     """
-    # Use PyPDF2 for better text extraction, similar to _index_file_worker
-    try:
-        reader = PdfReader(str(path))
-        pages = [p.extract_text() or "" for p in reader.pages]
-    except Exception:
-        pages = [""]
+    # Extract text using the appropriate loader based on file type
+    pages = extract_text_from_file(path)
 
-    # Build langchain Document objects per page
+    # Build langchain Document objects per page/section
     docs = []
     for i, pg in enumerate(pages):
         docs.append(Document(page_content=pg, metadata={"source": path.name, "page": i + 1}))
@@ -123,7 +178,7 @@ def create_vector_db_from_path(path: Path, collection_name: Optional[str] = None
         c.metadata['checksum'] = checksum
 
     if collection_name is None:
-        collection_name = f"pdf_{abs(hash(str(path)))}"
+        collection_name = f"doc_{abs(hash(str(path)))}"
 
     # Batch embed using sentence-transformers and add to a single chromadb PersistentClient
     try:
@@ -172,22 +227,17 @@ def create_vector_db_from_path(path: Path, collection_name: Optional[str] = None
 
 
 def _index_file_worker(path: Path, collection_name: Optional[str] = None) -> Dict[str, Any]:
-    """Index a single PDF file: extract text with PyPDF2, split, embed and persist to Chroma.
+    """Index a single document file: extract text, split, embed and persist to Chroma.
 
     Returns a dict with keys: collection_name, filename, checksum, profile
     """
     profile = {}
     t0 = time.time()
-    # extract pages
-    try:
-        reader = PdfReader(str(path))
-        pages = [p.extract_text() or "" for p in reader.pages]
-    except Exception:
-        # fallback to empty
-        pages = [""]
+    # extract pages/sections using the appropriate loader
+    pages = extract_text_from_file(path)
     profile['extract_time'] = time.time() - t0
 
-    # build langchain Document objects per page
+    # build langchain Document objects per page/section
     docs = []
     for i, pg in enumerate(pages):
         docs.append(Document(page_content=pg, metadata={"source": path.name, "page": i + 1}))
@@ -215,7 +265,7 @@ def _index_file_worker(path: Path, collection_name: Optional[str] = None) -> Dic
 
     # create or overwrite collection
     if collection_name is None:
-        collection_name = f"pdf_{checksum[:16]}" if checksum else f"pdf_{abs(hash(str(path)))}"
+        collection_name = f"doc_{checksum[:16]}" if checksum else f"doc_{abs(hash(str(path)))}"
 
     # Batch embed all chunks at once using sentence-transformers
     try:
@@ -262,7 +312,7 @@ def _index_file_worker(path: Path, collection_name: Optional[str] = None) -> Dic
 
 
 def index_pdfs_concurrent(paths: List[Path], max_workers: int = 4, progress_callback=None) -> Dict[str, Dict[str, str]]:
-    """Index multiple PDF files concurrently using threads.
+    """Index multiple document files concurrently using threads.
 
     progress_callback(completed, total) will be called if provided.
     Returns mapping collection_name -> {filename, checksum, last_indexed}
@@ -422,7 +472,7 @@ def list_collections() -> Dict[str, str]:
 
 
 def bootstrap_collections_from_uploads(upload_dir: Path) -> Dict[str, str]:
-    """Scan upload_dir for PDF files and ensure each has a Chroma collection and metadata entry.
+    """Scan upload_dir for document files (PDF, Word, Text) and ensure each has a Chroma collection and metadata entry.
 
     Returns simplified mapping collection_name -> filename for UI.
     """
@@ -431,8 +481,11 @@ def bootstrap_collections_from_uploads(upload_dir: Path) -> Dict[str, str]:
     if not upload_dir.exists():
         return {k: v.get('filename', '') if isinstance(v, dict) else v for k, v in meta.items()}
 
+    # Supported file extensions
+    supported_extensions = {'.pdf', '.docx', '.txt'}
+
     for p in upload_dir.iterdir():
-        if not p.is_file() or p.suffix.lower() != '.pdf':
+        if not p.is_file() or p.suffix.lower() not in supported_extensions:
             continue
         try:
             file_bytes = p.read_bytes()
@@ -471,7 +524,7 @@ def bootstrap_collections_from_uploads(upload_dir: Path) -> Dict[str, str]:
 
         # Otherwise create a collection for this file
         try:
-            coll_name = f"pdf_{checksum[:16]}" if checksum else None
+            coll_name = f"doc_{checksum[:16]}" if checksum else None
             collection_name = create_vector_db_from_path(p, coll_name)
             meta[collection_name] = {"filename": str(p.name), "checksum": checksum, "last_indexed": datetime.utcnow().isoformat()}
             changed = True

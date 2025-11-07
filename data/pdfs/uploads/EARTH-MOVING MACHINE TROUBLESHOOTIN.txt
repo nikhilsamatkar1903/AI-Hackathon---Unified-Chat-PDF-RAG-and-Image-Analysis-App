@@ -1,0 +1,101 @@
+EARTH-MOVING MACHINE TROUBLESHOOTING GUIDE
+
+1. Hydraulic System Slow or Jerky
+
+Causes: Low fluid, clogged filter, air in lines, worn pump
+Remedies: Refill fluid, replace filter, bleed air, test pump
+
+2. Engine Overheating
+
+Causes: Low coolant, clogged radiator, faulty thermostat
+Remedies: Refill coolant, clean radiator, replace thermostat
+
+3. Tracks Not Moving
+
+Causes: Drive motor failure, hydraulic pump malfunction
+Remedies: Inspect motor, test pump pressure, replace if needed
+
+4. Electrical System Dead
+
+Causes: Battery discharged, loose wiring, blown fuse
+Remedies: Recharge battery, tighten connections, replace fuse
+
+5. Fuel System Blockage
+
+Causes: Clogged filter, air in fuel line, faulty pump
+Remedies: Replace filter, bleed system, test pump
+
+6. Excessive Exhaust Smoke
+
+Causes: Over-fueling, oil leakage, coolant leak
+Remedies: Adjust fuel settings, replace seals, repair gasket
+
+7. Warning Lights Active
+
+Causes: Sensor failure, ECU error, wiring short
+Remedies: Scan ECU, secure connectors, repair harness
+
+8. Poor Digging Force
+
+Causes: Worn pump, low engine RPM, blocked hydraulic lines
+Remedies: Test pump, adjust RPM, flush lines
+
+9. Engine Hard Starting
+
+Causes: Weak battery, clogged injectors, low compression
+Remedies: Replace battery, clean injectors, inspect rings
+
+10. Hydraulic Oil Overheating
+
+Causes: Low oil level, cooler clogged, pump bypassing
+Remedies: Refill oil, clean cooler, repair pump
+
+11. Swing Function Slow
+
+Causes: Swing motor wear, control valve sticking
+Remedies: Inspect motor, clean or replace valve
+
+12. Boom Drops When Idle
+
+Causes: Cylinder seal leak, control valve internal leak
+Remedies: Replace seals, repair valve
+
+13. Engine Stalls Under Load
+
+Causes: Fuel starvation, clogged air filter, injector fault
+Remedies: Check fuel flow, replace air filter, service injectors
+
+14. Alternator Not Charging
+
+Causes: Broken belt, faulty alternator, corroded terminals
+Remedies: Replace belt, test alternator, clean terminals
+
+15. Hydraulic Noise (Whining)
+
+Causes: Air in system, cavitation, worn pump bearings
+Remedies: Bleed system, check suction line, replace pump
+
+16. Transmission Slipping
+
+Causes: Low transmission oil, worn clutch packs
+Remedies: Refill oil, inspect and replace clutch packs
+
+17. Steering Hard or Unresponsive
+
+Causes: Low steering fluid, pump failure, linkage damage
+Remedies: Refill fluid, test pump, repair linkage
+
+18. Brake System Weak
+
+Causes: Low brake fluid, worn pads, air in brake lines
+Remedies: Refill fluid, replace pads, bleed brakes
+
+19. Cab Display Blank
+
+Causes: Blown display fuse, wiring harness fault, ECU failure
+Remedies: Replace fuse, inspect harness, test ECU
+
+20. Unusual Vibrations
+
+Causes: Loose engine mounts, misaligned tracks, worn bearings
+Remedies: Tighten mounts, adjust track alignment, replace bearings
