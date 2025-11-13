@@ -178,6 +178,9 @@ FEW_SHOT_EXAMPLES = (
 RAG_TOP_K = 20  # per collection (increased for better retrieval)
 EXCERPT_MAX_CHARS = 2000
 
+# New: disclaimer shown at the start of any response that is NOT sourced from the local document DB
+DISCLAIMER_TEXT = "**⚠️ Disclaimer: The following information is not sourced from the system database, service manuals, or uploaded datasets. Its accuracy, authenticity, and completeness have not been verified against official or manufacturer documentation. Please validate this information from authorized or reliable sources before applying it..**\n\n"
+
 # NOTE: create_vector_db_from_path, load_chroma_collection and handle_uploaded_files
 # are implemented in `components.pdf_indexing`. Local duplicate implementations were
 # removed to avoid re-indexing the same files multiple times and to ensure a single
@@ -185,6 +188,240 @@ EXCERPT_MAX_CHARS = 2000
 
 from langchain.schema import Document
 import re
+
+
+def plan_retrieval_strategy(question: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Agentic RAG: Plan the retrieval strategy based on the question type and context.
+    Returns a plan dict with steps to execute.
+    """
+    plan_prompt = f"""
+You are an expert retrieval planner for technical documentation. Analyze the question and determine the optimal retrieval strategy.
+
+Question: {question}
+
+Available document types:
+- SymptomCauseRemedy_Sheet.xlsx: Contains symptom-cause-remedy mappings for diagnostics
+- CLG835H4F_ServiceManual.pdf: Service manual with detailed procedures and specifications
+- LiuGong_OperatorAndMaintenance.pdf: Operation and maintenance manual
+
+Based on the question, plan a retrieval strategy with these steps:
+1. Identify the primary intent (diagnostic/causes, remedy/fix, specification, maintenance, etc.)
+2. Determine which documents to check first, second, etc.
+3. Specify any section filtering (e.g., "Brake System", "Hydraulic System")
+4. Indicate if double RAG is needed (broad section search then narrow)
+5. Suggest search terms or keywords to use
+
+Return your plan in this exact JSON format:
+{{
+    "intent": "diagnostic|remedy|specification|maintenance|general",
+    "primary_document": "SymptomCauseRemedy_Sheet.xlsx|CLG835H4F_ServiceManual.pdf|LiuGong_OperatorAndMaintenance.pdf",
+    "secondary_documents": ["list of other docs"],
+    "section_filter": "specific section name or null",
+    "use_double_rag": true|false,
+    "search_keywords": ["keyword1", "keyword2"],
+    "rationale": "brief explanation"
+}}
+
+Plan:"""
+
+    try:
+        plan_response = chat_with_model(
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            user_prompt=plan_prompt,
+            system_prompt="You are a retrieval planning expert. Return only valid JSON.",
+            temperature=0.0
+        )
+        
+        # Parse the JSON response
+        import json
+        plan = json.loads(plan_response.strip())
+        logger.info(f"Planned retrieval strategy: {plan}")
+        return plan
+    except Exception as e:
+        logger.exception("Failed to plan retrieval strategy, using default")
+        # Default fallback plan
+        return {
+            "intent": "general",
+            "primary_document": "CLG835H4F_ServiceManual.pdf",
+            "secondary_documents": ["SymptomCauseRemedy_Sheet.xlsx", "LiuGong_OperatorAndMaintenance.pdf"],
+            "section_filter": None,
+            "use_double_rag": False,
+            "search_keywords": [question],
+            "rationale": "Fallback plan due to planning error"
+        }
+
+
+def perform_double_rag(question: str, selected_collections: List[str], section: str, keywords: List[str], rag_top_k: int = RAG_TOP_K) -> List[Any]:
+    """
+    Double RAG: First find the broad section, then narrow down to specific content.
+    """
+    logger.info(f"Performing double RAG for section: {section}, keywords: {keywords}")
+    
+    # Step 1: Search for the broad section
+    section_query = f"{section} section"
+    section_docs = []
+    
+    for coll in selected_collections:
+        try:
+            chroma = load_chroma_collection(coll)
+            docs = chroma.similarity_search(section_query, k=rag_top_k * 2)
+            section_docs.extend(docs)
+        except Exception:
+            logger.exception(f"Failed to search section in collection: {coll}")
+    
+    # Filter docs that contain the section name
+    filtered_section_docs = []
+    section_lower = section.lower()
+    for doc in section_docs:
+        content = getattr(doc, 'page_content', '').lower()
+        if section_lower in content:
+            filtered_section_docs.append(doc)
+    
+    if not filtered_section_docs:
+        logger.warning(f"No documents found for section: {section}, falling back to keyword search")
+        # Fallback to direct keyword search
+        return perform_keyword_search(question, selected_collections, keywords, rag_top_k)
+    
+    # Step 2: Within the section docs, search for specific keywords
+    refined_docs = []
+    for doc in filtered_section_docs[:rag_top_k]:  # Limit to top section docs
+        content = getattr(doc, 'page_content', '').lower()
+        if any(kw.lower() in content for kw in keywords):
+            refined_docs.append(doc)
+    
+    if not refined_docs:
+        # If no matches with keywords, return the section docs
+        refined_docs = filtered_section_docs[:rag_top_k]
+    
+    logger.info(f"Double RAG found {len(refined_docs)} refined documents")
+    return refined_docs
+
+
+def perform_keyword_search(question: str, selected_collections: List[str], keywords: List[str], rag_top_k: int = RAG_TOP_K) -> List[Any]:
+    """
+    Perform semantic search using the provided keywords.
+    """
+    search_query = " ".join(keywords) if keywords else question
+    all_docs = []
+    
+    for coll in selected_collections:
+        try:
+            chroma = load_chroma_collection(coll)
+            docs = chroma.similarity_search(search_query, k=rag_top_k)
+            all_docs.extend(docs)
+        except Exception:
+            logger.exception(f"Failed to search in collection: {coll}")
+    
+    # Sort by relevance (assuming Chroma returns in order)
+    return all_docs[:rag_top_k]
+
+
+def check_response_completeness(response: str, question: str) -> Dict[str, Any]:
+    """
+    Check if the response is complete or needs iterative refinement.
+    Returns dict with completeness assessment and suggested follow-up queries.
+    """
+    completeness_prompt = f"""
+Analyze if this response adequately answers the question. Consider:
+- Does it provide specific, actionable information?
+- Are there missing details that could be found with additional search?
+- Is the response too vague or generic?
+- Does it cite sources appropriately?
+
+Question: {question}
+Response: {response}
+
+Return JSON in this format:
+{{
+    "is_complete": true|false,
+    "missing_info": ["what's missing"],
+    "suggested_queries": ["follow-up search query 1", "query 2"],
+    "confidence": 0.0-1.0
+}}
+
+Analysis:"""
+
+    try:
+        analysis = chat_with_model(
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            user_prompt=completeness_prompt,
+            system_prompt="You are an expert at analyzing response completeness. Return only valid JSON.",
+            temperature=0.0
+        )
+        
+        import json
+        result = json.loads(analysis.strip())
+        logger.info(f"Response completeness: {result}")
+        return result
+    except Exception as e:
+        logger.exception("Failed to check completeness")
+        return {
+            "is_complete": True,
+            "missing_info": [],
+            "suggested_queries": [],
+            "confidence": 0.8
+        }
+
+
+def iterative_rag_refinement(question: str, initial_response: str, selected_collections: List[str], 
+                           suggested_queries: List[str], rag_top_k: int = RAG_TOP_K) -> str:
+    """
+    Perform iterative RAG by running additional searches for missing information.
+    """
+    if not suggested_queries:
+        return initial_response
+    
+    logger.info(f"Performing iterative refinement with queries: {suggested_queries}")
+    
+    additional_contexts = []
+    for query in suggested_queries[:2]:  # Limit to 2 additional queries
+        try:
+            # Perform search for the suggested query
+            additional_docs = perform_keyword_search(query, selected_collections, [query], rag_top_k // 2)
+            if additional_docs:
+                context = build_context_from_docs(additional_docs, max_chars_per_doc=EXCERPT_MAX_CHARS // 2)
+                additional_contexts.append(f"Additional context for '{query}':\n{context}")
+        except Exception:
+            logger.exception(f"Failed iterative search for: {query}")
+    
+    if not additional_contexts:
+        return initial_response
+    
+    # Combine initial response with additional context
+    additional_info_text = "\n\n".join(additional_contexts)
+    refinement_prompt = f"""
+You have an initial response to a question, but additional relevant information was found.
+Integrate the new information to provide a more complete answer.
+
+Question: {question}
+
+Initial Response: {initial_response}
+
+Additional Information:
+{additional_info_text}
+
+Provide an improved, integrated response that combines the best of both. Keep the same style and format as the initial response.
+If the additional information doesn't add value, keep the original response.
+
+Improved Response:"""
+
+    try:
+        refined_response = chat_with_model(
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            user_prompt=refinement_prompt,
+            system_prompt=None,
+            temperature=0.0
+        )
+        logger.info("Iterative refinement completed")
+        # Preserve disclaimer if present in initial response
+        if initial_response.startswith(DISCLAIMER_TEXT):
+            return DISCLAIMER_TEXT + refined_response
+        else:
+            return refined_response
+    except Exception:
+        logger.exception("Iterative refinement failed")
+        return initial_response
 
 
 def extract_part_tokens(question: str) -> List[str]:
@@ -418,10 +655,11 @@ def process_question_across_collections(
     if not selected_collections:
         try:
             response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=question, system_prompt=None, temperature=0.7)
-            return response
+            # Mark clearly that this answer is not from the system DB
+            return DISCLAIMER_TEXT + response
         except Exception:
             logger.exception("General chat failed")
-            return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
+            return DISCLAIMER_TEXT + "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
 
     logger.info(f"Processing question across collections: {selected_collections} using model {selected_model}")
     all_docs = []
@@ -456,7 +694,7 @@ def process_question_across_collections(
             docs_for_context = deduped[: max(10, rag_top_k * max(1, len(selected_collections)))]
             context_text = build_context_from_selected_docs(docs_for_context, max_chars_per_doc=max_chars_per_doc)
             if not context_text.strip():
-                return "The current manuals don’t mention that. Please try searching with alternate terms.\n\nWhat other help do you need or what other information do you need?"
+                return DISCLAIMER_TEXT + "The current manuals don’t mention that. Please try searching with alternate terms.\n\nWhat other help do you need or what other information do you need?"
             summary_prompt = (
                 "You are a technical summarizer for service technicians. Use ONLY the information present in the Context below to produce a concise abstract or summary tailored for a technician.\n"
                 "- Provide a short abstract (3-6 sentences) or a brief bullet summary if the content is list-like.\n"
@@ -591,9 +829,56 @@ def process_question_across_collections(
     except Exception:
         num_docs = int(rag_top_k)
 
-    # If exact-match chunks were found earlier, prioritize them and avoid duplicates
+    # Advanced RAG: Plan retrieval strategy
     try:
-        combined_docs = all_docs
+        retrieval_plan = plan_retrieval_strategy(question, conversation_history)
+        intent = retrieval_plan.get("intent", "general")
+        primary_doc = retrieval_plan.get("primary_document")
+        secondary_docs = retrieval_plan.get("secondary_documents", [])
+        section_filter = retrieval_plan.get("section_filter")
+        use_double_rag = retrieval_plan.get("use_double_rag", False)
+        search_keywords = retrieval_plan.get("search_keywords", [question])
+        
+        logger.info(f"Using advanced RAG plan: intent={intent}, double_rag={use_double_rag}, section={section_filter}")
+    except Exception:
+        logger.exception("Advanced RAG planning failed, using standard approach")
+        retrieval_plan = None
+        use_double_rag = False
+        search_keywords = [question]
+
+    # Perform retrieval based on plan
+    if retrieval_plan and use_double_rag and section_filter:
+        # Double RAG: section-based narrowing
+        try:
+            docs_for_context = perform_double_rag(question, selected_collections, section_filter, search_keywords, rag_top_k)
+        except Exception:
+            logger.exception("Double RAG failed, falling back to standard search")
+            docs_for_context = perform_keyword_search(question, selected_collections, search_keywords, rag_top_k)
+    else:
+        # Standard or agentic keyword-based search
+        docs_for_context = perform_keyword_search(question, selected_collections, search_keywords, rag_top_k)
+
+    # Prioritize documents based on plan
+    if retrieval_plan and primary_doc:
+        # Sort docs to prioritize primary document type
+        primary_docs = []
+        secondary_docs_list = []
+        
+        for doc in docs_for_context:
+            source = getattr(doc, 'metadata', {}).get('source', '').lower()
+            if primary_doc.lower() in source:
+                primary_docs.append(doc)
+            elif any(sec.lower() in source for sec in secondary_docs):
+                secondary_docs_list.append(doc)
+        
+        # Reorder: primary docs first, then secondary, then others
+        other_docs = [d for d in docs_for_context if d not in primary_docs and d not in secondary_docs_list]
+        docs_for_context = primary_docs + secondary_docs_list + other_docs
+        logger.info(f"Prioritized docs: {len(primary_docs)} primary, {len(secondary_docs_list)} secondary, {len(other_docs)} other")
+
+    # If exact-match chunks were found earlier, prioritize them
+    try:
+        combined_docs = docs_for_context
         if 'deduped_exact' in locals() and deduped_exact:
             # build set of keys for exact docs
             exact_keys = set()
@@ -605,7 +890,7 @@ def process_question_across_collections(
                 exact_keys.add(key)
             # filter out any docs already present in exact set
             filtered_all = []
-            for d in all_docs:
+            for d in docs_for_context:
                 try:
                     key = (getattr(d, 'page_content', '')[:200], tuple(sorted((d.metadata or {}).items())))
                 except Exception:
@@ -615,7 +900,7 @@ def process_question_across_collections(
             combined_docs = deduped_exact + filtered_all
             logger.info(f"Prioritized {len(deduped_exact)} exact-match chunks at the front of context")
     except Exception:
-        combined_docs = all_docs
+        combined_docs = docs_for_context
 
     docs_for_context = combined_docs[: num_docs]
     
@@ -648,10 +933,11 @@ def process_question_across_collections(
 
             general_prompt = f"{conversation_context}Please answer this question helpfully: {question}"
             response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
-            return response
+            # Prepend disclaimer for content not sourced from the local document DB
+            return DISCLAIMER_TEXT + response
         except Exception:
             logger.exception("General chat fallback failed")
-            return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
+            return DISCLAIMER_TEXT + "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
 
     # Build conversation history context if available
     conversation_context = ""
@@ -713,7 +999,8 @@ def process_question_across_collections(
                 try:
                     enhanced_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=enhanced_prompt, system_prompt=None, temperature=0.3)
                     if "manuals don't mention" not in enhanced_response.lower():
-                        response = enhanced_response
+                        # enhanced response is still not sourced from DB — prepend disclaimer
+                        response = DISCLAIMER_TEXT + enhanced_response
                 except Exception:
                     pass  # Keep original response if enhanced fails
 
@@ -734,35 +1021,53 @@ def process_question_across_collections(
                 general_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
                 # Only use general response if it's more helpful
                 if len(general_response) > 50 and "sorry" not in general_response.lower():
-                    response = general_response + "\n\n(Note: This is based on general knowledge and conversation context, not specific manual content.)"
+                    # Mark clearly that the following text is not from the system DB
+                    response = DISCLAIMER_TEXT + general_response
             except Exception:
                 logger.exception("General chat fallback failed")
 
-        # If the model didn't include a source, append the actual retrieved sources (unique, in-order)
-        if "[source:" not in response and docs_for_context:
-            seen = []
-            for d in docs_for_context:
-                src = None
-                if hasattr(d, 'metadata') and isinstance(d.metadata, dict):
-                    src = d.metadata.get('source') or d.metadata.get('filename')
-                if not src:
-                    # try to fallback to a best-effort string representation
-                    try:
-                        src = str(d.metadata) if hasattr(d, 'metadata') else None
-                    except Exception:
-                        src = None
-                if src and src not in seen:
-                    seen.append(src)
-                if len(seen) >= 5:
-                    break
-            if seen:
-                # append up to 5 unique sources in a single line
-                sources_line = ", ".join(seen)
-                response = response + f"\n\n[sources: {sources_line}]"
-        return response
     except Exception:
-        logger.exception("LLM invocation failed")
-        return "Sorry — something went wrong while generating the answer.\n\nWhat other help do you need or what other information do you need?"
+        logger.exception("LLM query failed")
+        response = "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
+
+    # If the model didn't include a source, append the actual retrieved sources (unique, in-order)
+    if "[source:" not in response and docs_for_context:
+        seen = []
+        for d in docs_for_context:
+            src = None
+            if hasattr(d, 'metadata') and isinstance(d.metadata, dict):
+                src = d.metadata.get('source') or d.metadata.get('filename')
+            if not src:
+                # try to fallback to a best-effort string representation
+                try:
+                    src = str(d.metadata) if hasattr(d, 'metadata') else None
+                except Exception:
+                    src = None
+            if src and src not in seen:
+                seen.append(src)
+            if len(seen) >= 5:
+                break
+        if seen:
+            # append up to 5 unique sources in a single line
+            sources_line = ", ".join(seen)
+            response = response + f"\n\n[sources: {sources_line}]"
+
+        # Iterative RAG: Check response completeness and refine if needed
+        try:
+            completeness_check = check_response_completeness(response, question)
+            if not completeness_check.get("is_complete", True) and completeness_check.get("suggested_queries"):
+                logger.info("Response incomplete, performing iterative refinement")
+                response = iterative_rag_refinement(
+                    question=question,
+                    initial_response=response,
+                    selected_collections=selected_collections,
+                    suggested_queries=completeness_check["suggested_queries"],
+                    rag_top_k=rag_top_k
+                )
+        except Exception:
+            logger.exception("Iterative RAG refinement failed, using original response")
+
+    return response
 
 
 def generate_conversation_summary(conversation_history, max_length=500):
