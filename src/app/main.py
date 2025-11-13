@@ -30,6 +30,7 @@ from dotenv import load_dotenv, find_dotenv
 import chromadb
 import openai
 from datetime import datetime
+from langdetect import detect
 
 # LangChain / vector imports
 from langchain_community.document_loaders import UnstructuredPDFLoader
@@ -71,30 +72,108 @@ METADATA_PATH = BASE_DIR / "data" / "pdf_collections.json"
 
 # RAG + prompt configuration
 SYSTEM_INSTRUCTIONS = (
-    "You are a helpful AI assistant for service technicians and business professionals. You have access to technical manuals and business documents.\n"
-    "Follow these rules:\n"
-    "- When you have relevant information from the provided Context, use it to give accurate, helpful answers\n"
-    "- If the Context contains partial information, provide what you can and note any limitations\n"
-    "- Only say 'The current manuals don't mention that. Please try searching with alternate terms.' when you truly have no relevant context\n"
-    "- Consider the conversation history to understand the user's intent and provide coherent, contextual responses\n"
-    "- For technical questions, be concise but informative, using bullet points when appropriate\n"
-    "- For business/analysis questions, provide thoughtful insights based on available information\n"
-    "- Always maintain conversation continuity and remember what was discussed previously\n"
-    "- If you used retrieved content, append a one-line citation like [source: filename]\n"
-    "- Be helpful, professional, and engaging in your responses\n"
-)
+    "You are an intelligent, context-aware technical assistant specialized in service and maintenance of the LiuGong CLG835H Wheel Loader (and similar models). "
+    "You have access to technical documents including the CLG835H Service Manual, Operation & Maintenance Manual, and Symptom–Cause–Remedy diagnostic sheets.\n\n"
 
+    "Core Behaviors:\n"
+    "- **Context Persistence**: When a user mentions a specific model (e.g., CLG835H), remember it as the active context for the entire conversation. Use this context for all subsequent questions unless explicitly changed. If no model context exists and the question requires it, ask: 'Please tell me the model for which you are looking for information or help.'\n"
+    "- **Adaptive Reasoning**: Analyze each question to identify missing parameters (e.g., model, operating hours, specific conditions). If key information is missing, ask specifically for it rather than giving vague responses. Think step-by-step before answering.\n"
+    "- **Answer Style Based on Intent**:\n"
+      "  - For diagnostic/causes questions: Provide only likely causes in a clear, structured technical format (bullet points).\n"
+      "  - For remedy/fix questions: Provide only corrective actions or step-by-step procedures.\n"
+      "  - For combined questions: Separate into 'Likely Causes:' and 'Recommended Remedies:' sections.\n"
+    "- **Domain Intelligence**: Base answers on service manual and operator manual data. Cite sources accurately. Sound like an experienced service engineer providing precise, actionable advice. Avoid generic statements unless context is truly missing.\n"
+    "- **Conversational Intelligence**: Link follow-up questions logically to previous context. End responses with helpful follow-up prompts when appropriate, like 'Would you like me to provide the recommended bleeding procedure next?'\n\n"
+
+    "Response Guidelines:\n"
+    "- Be concise yet informative, using bullet points for lists.\n"
+    "- Include safety warnings or cautions for maintenance actions involving hazards.\n"
+    "- Maintain conversation continuity and remember what was discussed.\n"
+    "- Append citations like [source: CLG835H4F_ServiceManual.pdf] (Section: Hydraulic System).\n"
+    "- Use exact specifications (fluids, torque, intervals) as in manuals.\n"
+    "- Be professional, precise, and engaging like a senior service engineer.\n"
+    "- If information is genuinely missing, respond: 'The current manuals don't mention that. Please try searching with alternate terms.'\n"
+)
 FEW_SHOT_EXAMPLES = (
-    "Example 1:\nQ: What is the engine displacement of the Bullet EFI?\nA: - 499 cc single-cylinder, 4-stroke air-cooled engine\n[source: BulletEFI_OwnersManual.pdf] (Section: Technical Specifications)\n\n"
-    "Example 2:\nQ: How should the motorcycle be refueled safely?\nA: - Turn off the engine before refueling\n- Avoid open flames or sparks\n- Fill only to the bottom of the filler neck insert\n[source: BulletEFI_OwnersManual.pdf] (Section: Safe Operating Rules)\n\n"
-    "Example 3:\nQ: What is the recommended tyre pressure for solo riding?\nA: - Front: 18 PSI\n- Rear: 28 PSI\n[source: BulletEFI_OwnersManual.pdf] (Section: Technical Specifications)\n\n"
-    "Example 4:\nQ: What oil should be used for the Classic EFI engine?\nA: - Use 15W50 API SL JASO MA semi-synthetic oil\n- Capacity: 2.3 to 2.5 litres including filter\n[source: ClassicEFI_OwnersManual.pdf] (Section: Recommended Oils)\n\n"
-    "Example 5:\nQ: What are the key safety steps before starting the Classic EFI?\nA: - Check brakes, clutch, gear shifter, tyre pressures, fuel and oil levels\n- Ensure proper riding gear\n[source: ClassicEFI_OwnersManual.pdf] (Section: Safe Operating Rules)\n\n"
-    "Example 6:\nQ: How can I prevent theft of the motorcycle?\nA: - Always lock the steering head\n- Remove the ignition key after parking\n[source: ClassicEFI_OwnersManual.pdf] (Section: Rules of the Road)\n\n"
-    "Example 7:\nQ: What is the maximum power output of the Continental GT?\nA: - 21.4 kW @ 5100 RPM\n[source: ContiGT_OwnersManual.pdf] (Section: Technical Specifications)\n\n"
-    "Example 8:\nQ: How do I use the fuel level indicator on the Continental GT?\nA: - Fuel bars decrease toward 'E' as fuel lowers\n- When last bar blinks (<3L), refuel immediately\n[source: ContiGT_OwnersManual.pdf] (Section: Operation of Controls)\n\n"
-    "Example 9:\nQ: What are the recommended tyre pressures for solo riding (Continental GT)?\nA: - Front: 20 PSI\n- Rear: 30 PSI\n[source: ContiGT_OwnersManual.pdf] (Section: Technical Specifications)\n\n"
-    "Example 10:\nQ: If the provided Context does not include the requested information, how should the assistant respond?\nA: The current manuals don’t mention that. Please try searching with alternate terms.\n\n"
+    "Example 1:\nQ: What is the engine model used in CLG835H Wheel Loader?\n"
+    "A: - Perkins 1204F-E44AT engine\n"
+    "- Rated net power: 97.9 kW\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: General Information)\n\n"
+
+    "Example 2:\nQ: What hydraulic oil should be used for the CLG835H in cold weather?\n"
+    "A: - Use HV-46 low-temperature anti-wear hydraulic oil for -25°C to 40°C\n"
+    "- Capacity: approximately 120 L (32 US gal)\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Oils Use Specifications)\n\n"
+
+    "Example 3:\nQ: What is the standard torque for M16 bolts on this loader?\n"
+    "A: - 305 ± 25 N·m (225 ± 18 lbf·ft)\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Standard Torque Table)\n\n"
+
+    "Example 4:\nQ: How often should engine oil be changed?\n"
+    "A: - Every 500 service hours after initial 100-hour service\n"
+    "- Use SAE 15W-40 API CJ-4 diesel engine oil\n"
+    "- Capacity: 12 L (3 US gal)\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Maintenance Schedule)\n\n"
+
+    "Example 5:\nQ: The loader is overheating. What could be the causes?\n"
+    "A: Likely causes:\n"
+    "- Low coolant level or coolant leakage\n"
+    "- Blocked radiator fins\n"
+    "- Fan drive malfunction\n"
+    "- Overloaded engine or clogged air filter\n"
+    "[source: SymptomCauseRemedy_Sheet.xlsx]\n\n"
+
+    "Example 6:\nQ: How do I fix the overheating issue?\n"
+    "A: Recommended remedies:\n"
+    "- Check and refill coolant; inspect for leaks\n"
+    "- Clean radiator and check fan operation\n"
+    "- Reduce load and ensure air filter is clean\n"
+    "Would you like me to provide the detailed cooling system inspection procedure?\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Cooling System)\n\n"
+
+    "Example 7:\nQ: What precautions must be taken before servicing the hydraulic system?\n"
+    "A: - Lower all attachments to the ground\n"
+    "- Shut off the engine and relieve hydraulic pressure\n"
+    "- Engage articulation lock\n"
+    "- Disconnect battery before opening any line\n"
+    "[source: LiuGong_OperatorAndMaintenance.pdf] (Section: Safety Information)\n\n"
+
+    "Example 8:\nQ: What is the rated operating mass of CLG835H Wheel Loader?\n"
+    "A: - 11,200 kg (24,696 lb)\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Technical Specification)\n\n"
+
+    "Example 9:\nQ: How can I identify the product serial number (PIN)?\n"
+    "A: - Located on the left side of the machine front frame, under the boom pin\n"
+    "- The last six characters represent the machine’s product serial number\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Manual Identification)\n\n"
+
+    "Example 10:\nQ: What should I do if the transmission oil appears milky?\n"
+    "A: - Indicates water contamination\n"
+    "- Drain the oil, replace the filter, and refill with SAE 15W-40 Mobil Delvac\n"
+    "- Inspect breather and seals for moisture ingress\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Oils Use Specifications)\n\n"
+
+    "Example 11:\nQ: The brakes are spongy. What are the causes and how to fix it?\n"
+    "A: Likely Causes:\n"
+    "- Air contamination in the brake hydraulic circuit\n"
+    "- Insufficient oil level in the master cylinder reservoir\n"
+    "- Brake system leakage at a caliper or line connection\n"
+    "- Excessive wear of the brake pads (wet axle)\n"
+    "Recommended Remedies:\n"
+    "- Bleed the brake system to remove air\n"
+    "- Check and refill the master cylinder reservoir with appropriate brake fluid\n"
+    "- Inspect for leaks in the brake lines and calipers, repair as necessary\n"
+    "- Examine brake pads for wear and replace if excessively worn\n"
+    "[source: CLG835H4F_ServiceManual.pdf] (Section: Brake System Diagnostics)\n\n"
+
+    "Example 12:\nQ: How many service hours has the machine been running?\n"
+    "A: Could you please confirm the operating hours or service interval you're referring to?\n\n"
+
+    "Example 13:\nQ: What oil should I use?\n"
+    "A: Please tell me the model for which you are looking for information or help.\n\n"
+
+    "Example 14:\nQ: If the provided Context does not include the requested information, how should the assistant respond?\n"
+    "A: The current manuals don't mention that. Please try searching with alternate terms.\n\n"
 )
 RAG_TOP_K = 20  # per collection (increased for better retrieval)
 EXCERPT_MAX_CHARS = 2000
@@ -339,7 +418,7 @@ def process_question_across_collections(
     if not selected_collections:
         try:
             response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=question, system_prompt=None, temperature=0.7)
-            return response + "\n\nWhat other help do you need or what other information do you need?"
+            return response
         except Exception:
             logger.exception("General chat failed")
             return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
@@ -401,7 +480,7 @@ def process_question_across_collections(
                             break
                     if seen:
                         resp = resp + f"\n\n[sources: {', '.join(seen)}]"
-                return resp + "\n\nWhat other help do you need or what other information do you need?"
+                return resp
             except Exception:
                 logger.exception("Summary generation failed")
                 return "Sorry — something went wrong while generating the summary.\n\nWhat other help do you need or what other information do you need?"
@@ -569,7 +648,7 @@ def process_question_across_collections(
 
             general_prompt = f"{conversation_context}Please answer this question helpfully: {question}"
             response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
-            return response + "\n\nWhat other help do you need or what other information do you need?"
+            return response
         except Exception:
             logger.exception("General chat fallback failed")
             return "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
@@ -680,7 +759,7 @@ def process_question_across_collections(
                 # append up to 5 unique sources in a single line
                 sources_line = ", ".join(seen)
                 response = response + f"\n\n[sources: {sources_line}]"
-        return response + "\n\nWhat other help do you need or what other information do you need?"
+        return response
     except Exception:
         logger.exception("LLM invocation failed")
         return "Sorry — something went wrong while generating the answer.\n\nWhat other help do you need or what other information do you need?"
@@ -747,6 +826,26 @@ def add_to_unified_history(mode, role, content):
     # Keep only last 100 messages to prevent memory issues
     if len(st.session_state['unified_conversation']) > 100:
         st.session_state['unified_conversation'] = st.session_state['unified_conversation'][-100:]
+
+
+def detect_language(text: str) -> str:
+    """Detect the language of the input text."""
+    try:
+        return detect(text)
+    except Exception:
+        return 'en'  # Default to English
+
+def translate_text(text: str, from_lang: str, to_lang: str) -> str:
+    """Translate text using Azure OpenAI."""
+    if from_lang == to_lang:
+        return text
+    try:
+        prompt = f"Translate the following text from {from_lang} to {to_lang}. Only return the translated text, no explanations: {text}"
+        translated = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=prompt, system_prompt=None, temperature=0.0)
+        return translated.strip()
+    except Exception:
+        logger.exception("Translation failed")
+        return text  # Fallback to original text
 
 
 def unified_page():
@@ -940,6 +1039,12 @@ def unified_page():
         else:
             st.info("No conversation history yet. Start chatting to see summary features!")
 
+        st.markdown("---")
+        st.subheader("Language Settings")
+        selected_language = st.selectbox("Response Language", ["English", "German", "French"], key="selected_language")
+        lang_codes = {"English": "en", "German": "de", "French": "fr"}
+        selected_lang_code = lang_codes[selected_language]
+
     # Main area for interaction
     st.subheader("Interaction")
 
@@ -957,7 +1062,11 @@ def unified_page():
         # Chat input
         user_input = st.chat_input("Enter your question:")
         if user_input:
-            # Add user message to conversation
+            # Detect input language and translate to English for processing
+            input_lang = detect_language(user_input)
+            translated_input = translate_text(user_input, input_lang, 'en')
+            
+            # Add user message to conversation (original language)
             st.session_state['chat_conversation'].append({"role": "user", "content": user_input})
             add_to_unified_history("💬 Chat", "user", user_input)
             with st.chat_message("user"):
@@ -965,12 +1074,14 @@ def unified_page():
 
             with st.spinner("Thinking..."):
                 try:
-                    response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=user_input, system_prompt=None, temperature=0.7)
-                    # Add assistant message to conversation
-                    st.session_state['chat_conversation'].append({"role": "assistant", "content": response})
-                    add_to_unified_history("💬 Chat", "assistant", response)
+                    response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=translated_input, system_prompt=None, temperature=0.7)
+                    # Translate response back to selected language
+                    final_response = translate_text(response, 'en', selected_lang_code)
+                    # Add assistant message to conversation (translated)
+                    st.session_state['chat_conversation'].append({"role": "assistant", "content": final_response})
+                    add_to_unified_history("💬 Chat", "assistant", final_response)
                     with st.chat_message("assistant"):
-                        st.write(response)
+                        st.write(final_response)
                 except Exception as e:
                     error_msg = f"Error: {e}"
                     st.session_state['chat_conversation'].append({"role": "assistant", "content": error_msg})
@@ -993,7 +1104,11 @@ def unified_page():
         # Chat input
         user_input = st.chat_input("Ask about PDFs or general questions:")
         if user_input:
-            # Add user message to conversation
+            # Detect input language and translate to English for processing
+            input_lang = detect_language(user_input)
+            translated_input = translate_text(user_input, input_lang, 'en')
+            
+            # Add user message to conversation (original language)
             st.session_state['pdf_chat_conversation'].append({"role": "user", "content": user_input})
             add_to_unified_history("📄 PDF & Chat", "user", user_input)
             with st.chat_message("user"):
@@ -1002,18 +1117,20 @@ def unified_page():
             with st.spinner("Thinking..."):
                 try:
                     response = process_question_across_collections(
-                        question=user_input,
+                        question=translated_input,  # Use translated question
                         selected_collections=selected_collections,
                         selected_model=selected_model,
                         conversation_history=st.session_state['pdf_chat_conversation'],
                         rag_top_k=RAG_TOP_K,
                         max_chars_per_doc=EXCERPT_MAX_CHARS
                     )
-                    # Add assistant message to conversation
-                    st.session_state['pdf_chat_conversation'].append({"role": "assistant", "content": response})
-                    add_to_unified_history("📄 PDF & Chat", "assistant", response)
+                    # Translate response back to selected language
+                    final_response = translate_text(response, 'en', selected_lang_code)
+                    # Add assistant message to conversation (translated)
+                    st.session_state['pdf_chat_conversation'].append({"role": "assistant", "content": final_response})
+                    add_to_unified_history("📄 PDF & Chat", "assistant", final_response)
                     with st.chat_message("assistant"):
-                        st.write(response)
+                        st.write(final_response)
                 except Exception as e:
                     error_msg = f"Error: {e}"
                     st.session_state['pdf_chat_conversation'].append({"role": "assistant", "content": error_msg})
@@ -1042,7 +1159,11 @@ def unified_page():
             # Chat input
             user_input = st.chat_input("Enter your question about the image:")
             if user_input:
-                # Add user message to conversation
+                # Detect input language and translate to English for processing
+                input_lang = detect_language(user_input)
+                translated_input = translate_text(user_input, input_lang, 'en')
+                
+                # Add user message to conversation (original language)
                 st.session_state['image_conversation'].append({"role": "user", "content": user_input})
                 add_to_unified_history("🌋 Image Analysis", "user", user_input)
                 with st.chat_message("user"):
@@ -1052,13 +1173,15 @@ def unified_page():
                     try:
                         # Convert image to base64
                         img_b64 = img_to_base64(image)
-                        # Use Ollama API directly for vision
-                        response = call_generate_api(model=selected_model, prompt=user_input, images_b64=[img_b64])
-                        # Add assistant message to conversation
-                        st.session_state['image_conversation'].append({"role": "assistant", "content": response})
-                        add_to_unified_history("🌋 Image Analysis", "assistant", response)
+                        # Use Ollama API directly for vision with translated prompt
+                        response = call_generate_api(model=selected_model, prompt=translated_input, images_b64=[img_b64])
+                        # Translate response back to selected language
+                        final_response = translate_text(response, 'en', selected_lang_code)
+                        # Add assistant message to conversation (translated)
+                        st.session_state['image_conversation'].append({"role": "assistant", "content": final_response})
+                        add_to_unified_history("🌋 Image Analysis", "assistant", final_response)
                         with st.chat_message("assistant"):
-                            st.write(response)
+                            st.write(final_response)
                     except Exception as e:
                         error_msg = f"Error: {e}"
                         st.session_state['image_conversation'].append({"role": "assistant", "content": error_msg})
