@@ -987,34 +987,29 @@ def process_question_across_collections(
         response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=full_prompt, system_prompt=None, temperature=0.0)
         logger.info(f"LLM response: {response}")
 
-        # Add disclaimer if response does not cite sources
-        if "[source:" not in response and not response.startswith(DISCLAIMER_TEXT):
-            response = DISCLAIMER_TEXT + response
-    except Exception:
-        logger.exception("LLM query failed")
-        response = "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
-
-    # If the model didn't include a source, append the actual retrieved sources (unique, in-order)
-    if "[source:" not in response and docs_for_context:
-        seen = []
-        for d in docs_for_context:
-            src = None
-            if hasattr(d, 'metadata') and isinstance(d.metadata, dict):
-                src = d.metadata.get('source') or d.metadata.get('filename')
-            if not src:
-                # try to fallback to a best-effort string representation
-                try:
-                    src = str(d.metadata) if hasattr(d, 'metadata') else None
-                except Exception:
-                    src = None
-            if src and src not in seen:
-                seen.append(src)
-            if len(seen) >= 5:
-                break
-        if seen:
-            # append up to 5 unique sources in a single line
-            sources_line = ", ".join(seen)
-            response = response + f"\n\n[sources: {sources_line}]"
+        # If the model didn't include a source, append the actual retrieved sources (unique, in-order)
+        appended_sources = False
+        if ("[source:" not in response and "[sources:" not in response) and docs_for_context:
+            seen = []
+            for d in docs_for_context:
+                src = None
+                if hasattr(d, 'metadata') and isinstance(d.metadata, dict):
+                    src = d.metadata.get('source') or d.metadata.get('filename')
+                if not src:
+                    # try to fallback to a best-effort string representation
+                    try:
+                        src = str(d.metadata) if hasattr(d, 'metadata') else None
+                    except Exception:
+                        src = None
+                if src and src not in seen:
+                    seen.append(src)
+                if len(seen) >= 5:
+                    break
+            if seen:
+                # append up to 5 unique sources in a single line
+                sources_line = ", ".join(seen)
+                response = response + f"\n\n[sources: {sources_line}]"
+                appended_sources = True
 
         # Iterative RAG: Check response completeness and refine if needed
         try:
@@ -1030,9 +1025,15 @@ def process_question_across_collections(
                 )
         except Exception:
             logger.exception("Iterative RAG refinement failed, using original response")
+    except Exception:
+        logger.exception("LLM query failed")
+        response = "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
 
-    # Add disclaimer for responses not sourced from manuals (no [source: citations)
-    if not has_retrieved_docs and "[source:" not in response and not response.startswith(DISCLAIMER_TEXT):
+    # Determine if the final response should be considered sourced from the DB
+    sourced_from_db = ("[source:" in response) or ("[sources:" in response) or appended_sources
+
+    # Add disclaimer only when the response is NOT sourced from the local document DB
+    if not sourced_from_db and not response.startswith(DISCLAIMER_TEXT):
         response = DISCLAIMER_TEXT + response
 
     return response
