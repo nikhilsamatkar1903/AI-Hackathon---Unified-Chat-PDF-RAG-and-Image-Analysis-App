@@ -374,6 +374,13 @@ def iterative_rag_refinement(question: str, initial_response: str, selected_coll
     
     logger.info(f"Performing iterative refinement with queries: {suggested_queries}")
     
+    # Check if initial response has disclaimer
+    has_disclaimer = initial_response.startswith(DISCLAIMER_TEXT)
+    if has_disclaimer:
+        clean_initial = initial_response[len(DISCLAIMER_TEXT):].lstrip()
+    else:
+        clean_initial = initial_response
+    
     additional_contexts = []
     for query in suggested_queries[:2]:  # Limit to 2 additional queries
         try:
@@ -396,12 +403,12 @@ Integrate the new information to provide a more complete answer.
 
 Question: {question}
 
-Initial Response: {initial_response}
+Initial Response: {clean_initial}
 
 Additional Information:
 {additional_info_text}
 
-Provide an improved, integrated response that combines the best of both. Keep the same style and format as the initial response.
+Provide an improved, integrated response that combines the best of both. Keep the same style and format as the initial_response.
 If the additional information doesn't add value, keep the original response.
 
 Improved Response:"""
@@ -414,8 +421,8 @@ Improved Response:"""
             temperature=0.0
         )
         logger.info("Iterative refinement completed")
-        # Preserve disclaimer if present in initial response
-        if initial_response.startswith(DISCLAIMER_TEXT):
+        # Add disclaimer back if it was present
+        if has_disclaimer:
             return DISCLAIMER_TEXT + refined_response
         else:
             return refined_response
@@ -904,6 +911,8 @@ def process_question_across_collections(
 
     docs_for_context = combined_docs[: num_docs]
     
+    has_retrieved_docs = len(docs_for_context) > 0
+    
     context_text = build_context_from_selected_docs(docs_for_context, max_chars_per_doc=max_chars_per_doc)
 
     # Debug: log the context text
@@ -978,54 +987,9 @@ def process_question_across_collections(
         response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=full_prompt, system_prompt=None, temperature=0.0)
         logger.info(f"LLM response: {response}")
 
-        # Check if the response is too generic/unhelpful and try to provide better context
-        if "manuals don't mention" in response.lower() and conversation_history:
-            # If we have conversation history, try to provide a more contextual response
-            recent_context = ""
-            for msg in conversation_history[-3:]:  # Look at last 3 messages
-                if msg['role'] == 'assistant' and 'source:' in msg['content']:
-                    # Extract source information from previous responses
-                    import re
-                    sources = re.findall(r'\[source:\s*([^]]+)\]', msg['content'])
-                    if sources:
-                        recent_context = f"Based on our previous discussion about {', '.join(sources)}, "
-
-            if recent_context:
-                # Retry with more context
-                enhanced_prompt = full_prompt.replace(
-                    "Question: {question}",
-                    f"Context: {recent_context}Question: {question}"
-                )
-                try:
-                    enhanced_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=enhanced_prompt, system_prompt=None, temperature=0.3)
-                    if "manuals don't mention" not in enhanced_response.lower():
-                        # enhanced response is still not sourced from DB — prepend disclaimer
-                        response = DISCLAIMER_TEXT + enhanced_response
-                except Exception:
-                    pass  # Keep original response if enhanced fails
-
-        # If the response indicates no information in manuals, try general chat with context
-        if "manuals don't mention" in response.lower():
-            conversation_context = ""
-            if conversation_history and len(conversation_history) > 1:
-                recent_history = conversation_history[-4:-1]  # Exclude current question
-                if recent_history:
-                    conversation_context = "\n\nPrevious conversation context:\n"
-                    for msg in recent_history:
-                        role = "User" if msg['role'] == 'user' else "Assistant"
-                        content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
-                        conversation_context += f"{role}: {content}\n"
-
-            general_prompt = f"{conversation_context}Based on the conversation context, please provide a helpful response to: {question}"
-            try:
-                general_response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
-                # Only use general response if it's more helpful
-                if len(general_response) > 50 and "sorry" not in general_response.lower():
-                    # Mark clearly that the following text is not from the system DB
-                    response = DISCLAIMER_TEXT + general_response
-            except Exception:
-                logger.exception("General chat fallback failed")
-
+        # Add disclaimer if response does not cite sources
+        if "[source:" not in response and not response.startswith(DISCLAIMER_TEXT):
+            response = DISCLAIMER_TEXT + response
     except Exception:
         logger.exception("LLM query failed")
         response = "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
@@ -1066,6 +1030,10 @@ def process_question_across_collections(
                 )
         except Exception:
             logger.exception("Iterative RAG refinement failed, using original response")
+
+    # Add disclaimer for responses not sourced from manuals (no [source: citations)
+    if not has_retrieved_docs and "[source:" not in response and not response.startswith(DISCLAIMER_TEXT):
+        response = DISCLAIMER_TEXT + response
 
     return response
 
