@@ -1147,6 +1147,18 @@ def translate_text(text: str, from_lang: str, to_lang: str) -> str:
 def unified_page():
     st.title("AI Hackathon")
 
+    # Set up session-specific logging
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+    log_filename = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.log"
+    log_file = logs_dir / log_filename
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(file_handler)
+    logger.info(f"Session log started: {log_file}")
+
     # Mode selection at the top
     mode = st.radio(
         "Select interaction mode:",
