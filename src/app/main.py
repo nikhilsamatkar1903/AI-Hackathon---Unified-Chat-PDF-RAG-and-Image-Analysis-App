@@ -82,7 +82,7 @@ SYSTEM_INSTRUCTIONS = (
       "  - For diagnostic/causes questions: Provide only likely causes in a clear, structured technical format (bullet points).\n"
       "  - For remedy/fix questions: Provide only corrective actions or step-by-step procedures.\n"
       "  - For combined questions: Separate into 'Likely Causes:' and 'Recommended Remedies:' sections.\n"
-    "- **Domain Intelligence**: Base answers on service manual and operator manual data. Cite sources accurately. Sound like an experienced service engineer providing precise, actionable advice. Avoid generic statements unless context is truly missing.\n"
+    "- **Domain Intelligence**: Base answers ONLY on the provided Context below. Do not invent, assume, or add any information not explicitly present in the Context. Cite sources accurately from the Context.\n"
     "- **Conversational Intelligence**: Link follow-up questions logically to previous context. End responses with helpful follow-up prompts when appropriate, like 'Would you like me to provide the recommended bleeding procedure next?'\n\n"
 
     "Response Guidelines:\n"
@@ -92,7 +92,7 @@ SYSTEM_INSTRUCTIONS = (
     "- Append citations like [source: CLG835H4F_ServiceManual.pdf] (Section: Hydraulic System).\n"
     "- Use exact specifications (fluids, torque, intervals) as in manuals.\n"
     "- Be professional, precise, and engaging like a senior service engineer.\n"
-    "- If information is genuinely missing, respond: 'The current manuals don't mention that. Please try searching with alternate terms.'\n"
+    "- If the requested information is not present in the Context, respond exactly: 'The current manuals don't mention that. Please try searching with alternate terms.'\n"
 )
 FEW_SHOT_EXAMPLES = (
     "Example 1:\nQ: What is the engine model used in CLG835H Wheel Loader?\n"
@@ -175,7 +175,7 @@ FEW_SHOT_EXAMPLES = (
     "Example 14:\nQ: If the provided Context does not include the requested information, how should the assistant respond?\n"
     "A: The current manuals don't mention that. Please try searching with alternate terms.\n\n"
 )
-RAG_TOP_K = 20  # per collection (increased for better retrieval)
+RAG_TOP_K = 100  # per collection (increased for better retrieval)
 EXCERPT_MAX_CHARS = 2000
 
 # New: disclaimer shown at the start of any response that is NOT sourced from the local document DB
@@ -669,6 +669,7 @@ def process_question_across_collections(
             return DISCLAIMER_TEXT + "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
 
     logger.info(f"Processing question across collections: {selected_collections} using model {selected_model}")
+    logger.info(f"Question: {question}")
     all_docs = []
 
     # If the user explicitly asked for a summary/abstract/overview, run a summary flow
@@ -749,7 +750,7 @@ def process_question_across_collections(
                                 exact_docs.extend(matches)
                 except Exception:
                     logger.exception(f"Exact-search failed for collection {coll}")
-        # deduplicate exact_docs while preserving order
+        # deduped exact_docs while preserving order
         seen_keys = set()
         deduped_exact = []
         for d in exact_docs:
@@ -876,7 +877,6 @@ def process_question_across_collections(
 
     # Proceed with RAG for non-general intents
     # Perform retrieval based on plan
-    if retrieval_plan and use_double_rag and section_filter:
         # Double RAG: section-based narrowing
         try:
             docs_for_context = perform_double_rag(question, selected_collections, section_filter, search_keywords, rag_top_k)
@@ -1147,17 +1147,15 @@ def translate_text(text: str, from_lang: str, to_lang: str) -> str:
 def unified_page():
     st.title("AI Hackathon")
 
-    # Set up session-specific logging
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    log_filename = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.log"
-    log_file = logs_dir / log_filename
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-    logging.getLogger().addHandler(file_handler)
-    logger.info(f"Session log started: {log_file}")
+    # Set up session logging
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_filename = os.path.join(log_dir, f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
+    logger.info(f"Session started. Log file: {log_filename}")
 
     # Mode selection at the top
     mode = st.radio(
