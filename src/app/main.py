@@ -853,6 +853,28 @@ def process_question_across_collections(
         use_double_rag = False
         search_keywords = [question]
 
+    # Check if intent is general, if so, do general chat instead of RAG
+    if retrieval_plan and retrieval_plan.get("intent") == "general":
+        try:
+            conversation_context = ""
+            if conversation_history and len(conversation_history) > 1:
+                recent_history = conversation_history[-6:-1]  # Exclude current question
+                if recent_history:
+                    conversation_context = "\n\nPrevious conversation:\n"
+                    for msg in recent_history:
+                        role = "User" if msg['role'] == 'user' else "Assistant"
+                        content = msg['content'][:300] + "..." if len(msg['content']) > 300 else msg['content']
+                        conversation_context += f"{role}: {content}\n"
+
+            general_prompt = f"{conversation_context}Please answer this question helpfully: {question}"
+            response = chat_with_model(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"), user_prompt=general_prompt, system_prompt=None, temperature=0.7)
+            # Prepend disclaimer for content not sourced from the local document DB
+            return DISCLAIMER_TEXT + response
+        except Exception:
+            logger.exception("General chat failed")
+            return DISCLAIMER_TEXT + "Sorry — something went wrong.\n\nWhat other help do you need or what other information do you need?"
+
+    # Proceed with RAG for non-general intents
     # Perform retrieval based on plan
     if retrieval_plan and use_double_rag and section_filter:
         # Double RAG: section-based narrowing
