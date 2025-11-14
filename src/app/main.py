@@ -195,6 +195,20 @@ def plan_retrieval_strategy(question: str, conversation_history: List[Dict[str, 
     Agentic RAG: Plan the retrieval strategy based on the question type and context.
     Returns a plan dict with steps to execute.
     """
+    # Check if the question is about LiuGong/CLG835H models; otherwise, treat as general
+    question_lower = question.lower()
+    is_liugong_related = "liugong" in question_lower or "clg835h" in question_lower or "clg" in question_lower
+    if not is_liugong_related:
+        return {
+            "intent": "general",
+            "primary_document": None,
+            "secondary_documents": [],
+            "section_filter": None,
+            "use_double_rag": False,
+            "search_keywords": [question],
+            "rationale": "Question not related to LiuGong/CLG835H models"
+        }
+
     plan_prompt = f"""
 You are an expert retrieval planner for technical documentation. Analyze the question and determine the optimal retrieval strategy.
 
@@ -234,7 +248,6 @@ Plan:"""
         )
         
         # Parse the JSON response
-        import json
         plan = json.loads(plan_response.strip())
         logger.info(f"Planned retrieval strategy: {plan}")
         return plan
